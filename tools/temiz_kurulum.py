@@ -80,7 +80,8 @@ def siniflandir(hedef, paket=PAKET, cron=''):
         if os.path.realpath(yol) == paket_gercek:
             dokunma.append((ad, 'kurulum paketi'))
         elif cron and ad not in KOD and _cronda_geciyor(ad, cron):
-            dokunma.append((ad, "crontab'da kullanılıyor (başka bir iş olabilir)"))
+            dokunma.append((ad, "cron işinizin log dosyası: iş buraya yazmaya devam eder (zararsız)" if ad.endswith('.log')
+                            else "crontab'da kullanılıyor (başka bir iş olabilir)"))
         elif fnmatch.fnmatch(ad, '*islem_verileri*.csv') and not _eslesir(ad, KENDI_VERIMIZ):
             dokunma.append((ad, 'başka bir botun verisi olabilir: gerekmiyorsa elle taşıyın'))
         elif ad.startswith('.'):
@@ -152,6 +153,20 @@ def _yaz_liste(baslik, liste):
         print("   -")
 
 
+def cron_onerisi(cron, hedef):
+    """'Sonraki adımlar'ın cron maddesi: mevcut crontab'a göre (yinelenen satır önerilmez)."""
+    etiket = f"45 2 * * * cd {hedef} && {hedef}/venv/bin/python shadow_labeler.py >> {hedef}/shadow_labeler.log 2>&1"
+    trainer = f"0 3 * * *  cd {hedef} && {hedef}/venv/bin/python ai_trainer.py >> {hedef}/ai_trainer.log 2>&1"
+    var_t, var_e = _cronda_geciyor('ai_trainer.py', cron), _cronda_geciyor('shadow_labeler.py', cron)
+    if var_t and var_e:
+        return ("Gece işleriniz crontab'da zaten var (trainer + etiketleyici) ve artık yeni dosyaları çalıştırır: "
+                "yeni satır EKLEMEYİN.\n     `crontab -l` ile etiketleyicinin 03:00 trainer'dan ÖNCE çalıştığını "
+                "kontrol edin (gerekirse saatini 45 2 yapın).")
+    if var_t:
+        return f"crontab'daki trainer satırınız aynı kalsın; etiketleyiciyi ondan ÖNCE ekleyin (crontab -e):\n     {etiket}"
+    return f"Gece işlerini ekleyin (crontab -e), etiketleyici trainer'dan ÖNCE:\n     {etiket}\n     {trainer}"
+
+
 def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
     hedef, paket = os.path.abspath(hedef), os.path.abspath(paket)
     if os.path.realpath(hedef) == os.path.realpath(paket):
@@ -161,7 +176,8 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
     if hata:
         print(f"❌ {hata}")
         return 2
-    tasinacak, dokunma, bilinmeyen = siniflandir(hedef, paket, crontab_metni())
+    cron = crontab_metni()
+    tasinacak, dokunma, bilinmeyen = siniflandir(hedef, paket, cron)
     cakisan = [a for a in KOD + GECMIS if os.path.exists(os.path.join(hedef, a))
                and a not in {ad for ad, _ in tasinacak}]
     if cakisan:
@@ -234,9 +250,7 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
 SONRAKİ ADIMLAR
 1) Botu her zamanki komutunuzla başlatın (Telegram'a "CORE V18.4" mesajı gelir), ör.:
      cd {hedef} && nohup {hedef}/venv/bin/python ai_bot.py >> bot.log 2>&1 &
-2) Gece işleri (crontab -e): mevcut 03:00 trainer satırınız aynı kalabilir; etiketleyiciyi ondan ÖNCE ekleyin
-     45 2 * * * cd {hedef} && {hedef}/venv/bin/python shadow_labeler.py >> labeler.log 2>&1
-     0 3 * * *  cd {hedef} && {hedef}/venv/bin/python ai_trainer.py >> trainer.log 2>&1
+2) {cron_onerisi(cron, hedef)}
 3) Bir kereye mahsus veri hattı (bot çalışırken de olur):
      cd {hedef} && venv/bin/python shadow_labeler.py && venv/bin/python backfill_sinyaller.py --gun 180 --evren 80
 4) Paket klasörü ve zip artık gereksiz:  rm -rf {paket} {paket}.zip

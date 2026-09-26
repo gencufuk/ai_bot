@@ -176,3 +176,17 @@ def test_calisan_surec_tespiti(monkeypatch):
     monkeypatch.setattr(tk.subprocess, 'run', lambda *a, **k: Sonuc())
     bulunan = tk.calisan_bot_surecleri({'ufuk_bot.py'})
     assert bulunan == ['123 /root/venv/bin/python /root/ufuk_bot.py', '1011 /root/venv/bin/python ai_bot.py']
+
+
+def test_cron_log_dosyalari_ve_cron_onerisi(sunucu, monkeypatch, capsys):
+    kok, paket = sunucu
+    _yaz(os.path.join(kok, 'ai_trainer.log'), 'eski log\n')
+    cron = ("0 3 * * * /root/venv/bin/python /root/ai_trainer.py >> /root/ai_trainer.log 2>&1\n"
+            "45 2 * * * /root/venv/bin/python /root/shadow_labeler.py >> /root/shadow_labeler.log 2>&1\n")
+    monkeypatch.setattr(tk, 'crontab_metni', lambda: cron)
+    assert tk.kur(kok, paket, uygula=True, kontrol=False, simdi=ZAMAN) == 0
+    cikti = capsys.readouterr().out
+    assert os.path.exists(os.path.join(kok, 'ai_trainer.log'))
+    assert 'cron işinizin log dosyası' in cikti and 'yeni satır EKLEMEYİN' in cikti
+    assert 'EKLEMEYİN' not in tk.cron_onerisi('0 3 * * * python /root/ai_trainer.py', '/root')
+    assert 'shadow_labeler.py' in tk.cron_onerisi('', '/root') and 'ai_trainer.py' in tk.cron_onerisi('', '/root')

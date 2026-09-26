@@ -29,11 +29,14 @@ Kurulum aracı (`tools/temiz_kurulum.py`) **hiçbir dosyayı silmez**:
    ```
    Sonda kurulum kontrolü çalışır. ❌ varsa botu başlatmayın.
 6. **Botu başlatın.** Telegram'a "CORE V18.4 başladı" mesajı gelir.
-7. **Cron** (`crontab -e`): mevcut 03:00 trainer satırınız aynı kalabilir; etiketleyiciyi ondan önce ekleyin:
+7. **Cron:** `crontab -l` ile bakın. Trainer ve etiketleyici satırları zaten varsa yeni satır eklemeyin; aynı dosya
+   adlarını çalıştırdıkları için artık yeni sürümü çalıştırırlar. Yalnız etiketleyicinin 03:00 trainer'dan **önce**
+   çalıştığını kontrol edin. Hiç yoksa ekleyin (`crontab -e`):
    ```
-   45 2 * * * cd /root && /root/venv/bin/python shadow_labeler.py >> labeler.log 2>&1
-   0 3 * * *  cd /root && /root/venv/bin/python ai_trainer.py >> trainer.log 2>&1
+   45 2 * * * cd /root && /root/venv/bin/python shadow_labeler.py >> /root/shadow_labeler.log 2>&1
+   0 3 * * *  cd /root && /root/venv/bin/python ai_trainer.py >> /root/ai_trainer.log 2>&1
    ```
+   Araç cron'un yazdığı log dosyalarına (ör. `ai_trainer.log`, `shadow_labeler.log`) dokunmaz; bunlar zararsızdır.
 8. **Veri hattını bir kez çalıştırın** (bot çalışırken de olur):
    ```bash
    cd /root && venv/bin/python shadow_labeler.py
