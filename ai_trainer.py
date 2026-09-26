@@ -14,7 +14,8 @@ V2'nin yapısal sorunları (ANALIZ_V18.4.md §2):
     anlamsızlaştırıyordu. Sinyal_Encoded veride %100 sabit (hep MSB).
 
 V3:
-  - Veri: etiketli_sinyaller.csv (core + shadow; shadow_labeler V2) + backfill_sinyaller.csv.
+  - Veri: etiketli_sinyaller.csv (core + shadow + backfill; tek eğitim dosyası). Henüz birleştirilmemiş eski
+    backfill_sinyaller.csv varsa o da okunur (aynı Anahtar bir kez sayılır).
     Hepsi AYNI etiket fonksiyonuyla etiketli (sniper.etiketleme) -> güvenle birleşir.
   - Hedef: y = 1[Etiket_Getiri > 0] (net, komisyon dahil).
   - Tek karar modeli (core). Eski filtre modeli yeni doğrulanmış model yayına alınınca emekliye ayrılır.
@@ -51,7 +52,7 @@ from sniper.model_karti import json_uyumlu, modeli_kartla_kaydet
 from sniper.ozellikler import ozellik_matrisi
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ETIKET_DOSYALARI = ['etiketli_sinyaller.csv', 'backfill_sinyaller.csv']
+ETIKET_DOSYALARI = ['etiketli_sinyaller.csv', 'backfill_sinyaller.csv']   # ikincisi yalnız eski kurulumlarda
 LOG_DOSYASI = os.path.join(BASE_DIR, 'ai_trainer_history.log')
 RAPOR_DOSYASI = os.path.join(BASE_DIR, 'egitim_raporu.json')
 CORE_MODEL = os.path.join(BASE_DIR, 'core_xgboost_model.json')

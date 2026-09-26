@@ -160,3 +160,30 @@ def test_onarim_araci_gercek_v2_yedegini_onarir(tmp_path):
     # 16 Eylül satırlarında ADX kolonları yoktu -> boş kalmalı, skorlar kaymamalı
     ilk = df.iloc[0]
     assert pd.isna(ilk['Sym_ADX']) and abs(ilk['AI_Skor'] - 0.7787207961082458) < 1e-12
+
+
+def _es_zamanli_yazici(yol, etiket, tur, kolonlar):
+    from sniper.csv_kayit import satirlari_ekle
+    for i in range(tur):
+        satirlari_ekle(yol, [{'a': f'{etiket}{i}-{j}', 'b': 'x' * 40, 'c': etiket} for j in range(20)], kolonlar)
+
+
+def test_surecler_arasi_kilit_es_zamanli_yazimda_satir_kaybetmez(tmp_path):
+    """Etiketleyici, backfill ve birleştirme aracı aynı eğitim dosyasına ayrı süreçlerden yazabilir.
+    Biri şemayı genişletip dosyayı atomik yeniden yazarken diğerinin eklediği satırlar kaybolmamalı."""
+    import multiprocessing as mp
+    yol = str(tmp_path / 'ortak.csv')
+    ctx = mp.get_context('fork')
+    surecler = [ctx.Process(target=_es_zamanli_yazici, args=(yol, 'A', 30, ['a', 'b'])),
+                ctx.Process(target=_es_zamanli_yazici, args=(yol, 'B', 30, ['a', 'b', 'c']))]
+    for s in surecler:
+        s.start()
+    for s in surecler:
+        s.join(60)
+        assert s.exitcode == 0
+    with open(yol, encoding='utf-8', newline='') as f:
+        satirlar = list(csv.reader(f))
+    assert satirlar[0] == ['a', 'b', 'c']
+    govde = satirlar[1:]
+    assert len(govde) == 2 * 30 * 20 and all(len(r) == 3 for r in govde)
+    assert len({r[0] for r in govde}) == 2 * 30 * 20

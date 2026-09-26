@@ -22,21 +22,23 @@ doğrulanmadığı için bot GÖLGE MODDA çalışır (aşağıda).
 | `ai_bot.py` | Ana alım-satım motoru (3 async döngü + bildirim, model izleme, watchdog görevleri). Log öneki: `[CORE V18.4]` |
 | `ai_trainer.py` | V3: her gece 03:00 (cron) tek karar modelini eğitir; purged walk-forward CV + istatistiksel/ekonomik kapılar; geçemeyen model kaydedilmez. Rapor: `egitim_raporu.json` |
 | `shadow_labeler.py` | V2: her gece 02:45 (cron) core + shadow sinyallerini **tek tip etiketle** etiketler → `etiketli_sinyaller.csv` |
-| `backfill_sinyaller.py` | Elle/aylık: geçmiş OHLCV'den sinyal üretir + aynı etiketle etiketler → `backfill_sinyaller.csv` |
+| `backfill_sinyaller.py` | Elle/aylık: geçmiş OHLCV'den sinyal üretir + aynı etiketle etiketler → `etiketli_sinyaller.csv` (Kaynak=backfill) |
 | `sniper/` | Ortak modüller: `csv_kayit` (güvenli CSV), `risk_motoru` (çıkış kararları), `ozellikler` (kural + feature), `etiketleme`, `etiket_deposu`, `model_karti` |
-| `tools/` | `temiz_kurulum.py` (arşivle-kur), `kurulum_kontrol.py` (ön kontrol), `csv_onar.py` (kolon kayması onarımı), `gecmis_simulasyon.py` / `v184_simulasyon.py` (geçmiş simülasyonları) |
-| `core_islem_verileri.csv` | V1 işlem kaydı (13 kolon, eski format — uyumluluk için yazılmaya devam ediyor) |
-| `core_islem_verileri_v2.csv` | V2 işlem kaydı (başlıklı, 25 kolon: V1 + genişletilmiş feature'lar + AI skorları) |
+| `tools/` | `temiz_kurulum.py` (arşivle-kur; `--guncelle` ile yalnız kod), `veri_birlestir.py` (eski dosyaları tek düzene katar; `--ekle` ile başka makineden eğitim verisi alır), `kurulum_kontrol.py` (ön kontrol), `csv_onar.py` (kolon kayması onarımı), `gecmis_simulasyon.py` / `v184_simulasyon.py` (geçmiş simülasyonları) |
+| `core_islem_verileri.csv` | ESKİ V1 işlem kaydı (13 kolon). V18.4 artık yazmıyor (V2 tüm kolonlarını içerir); `tools/veri_birlestir.py` V2'ye katar |
+| `core_islem_verileri_v2.csv` | Tek işlem kaydı (başlıklı: V1'in 13 kolonu + genişletilmiş feature'lar + AI skorları). Hesaba özel, makineler arasında paylaşılmaz |
 | `shadow_sinyaller.csv` | Kural filtresini geçip **girilmeyen** sinyaller (sebep: AI_RED / TEK_ALIM_KURALI / BAKIYE_YETERSIZ / REJIM_YATAY) |
 | `shadow_sinyaller_etiketli.csv` | ESKİ (V1) labeler çıktısı; V18.4'te kullanılmaz, temiz kurulumda arşive kalır |
 | `core_xgboost_model.json` (+ `.kart.json`) | Karar modeli. Feature listesi modelin `feature_names`'inden, eşik/metrikler karttan okunur; bot 5 dk'da bir değişikliği kontrol edip yeniden yükler |
 | `filter_model.json` | Eski filtre modeli (Ağustos verisini ezberlemiş); temiz kurulumda arşive kalır, V3 trainer da yeni model yayınlayınca `.emekli_<ts>` olarak kenara alır |
-| `etiketli_sinyaller.csv` / `backfill_sinyaller.csv` | Birleşik etiketli sinyal tablosu (Kaynak: core/shadow/backfill), trainer'ın tek girdisi |
+| `etiketli_sinyaller.csv` | Tek eğitim dosyası: core + shadow + backfill sinyalleri aynı etiketle (Kaynak kolonu), trainer'ın girdisi. Makineler arasında paylaşılabilir (`veri_birlestir.py --ekle`); aynı Anahtar bir kez sayılır. Eski kurulumdaki ayrı `backfill_sinyaller.csv` varsa trainer onu da okur |
 | `ufuk_islem_verileri.csv` | İkinci botun verisi. V18.4 trainer'ı kullanmaz (tek tip etiketli veriyle eğitir); temiz kurulum bu dosyaya dokunmaz |
 
 CSV/state dosyalarını ELLE OLUŞTURMAYIN — kod ilk ihtiyaçta başlığıyla oluşturur.
 V18.4 CSV katmanı mevcut veriyi asla silmez: şema değişince yeni kolonlar sona eklenir; başlıksız
 veya kaymış dosya bayt bayt arşivlenip (`.legacy_<ts>` / `.bozuk_<ts>`) Telegram'a bildirilir.
+Etiketleyici ve backfill aynı eğitim dosyasına yazar: her ekleme süreçler arası dosya kilidi (`flock`) altında
+yapılır, aynı anda çalışsalar da satır kaybolmaz.
 
 ## AI Modları
 - **GÖLGE MOD (`AI_GOLGE_MOD = True`; kodda şu an `False`. Öneri: bloklama açık kalsın ama gürültü olan `filter_model.json` kaldırılsın, bkz. ANALIZ §2.3):** Model skorları her sinyalde
@@ -93,12 +95,13 @@ veya kaymış dosya bayt bayt arşivlenip (`.legacy_<ts>` / `.bozuk_<ts>`) Teleg
                           sinyal dakikasından başlayan 240 adet 1m mumla tek tip etiket
                           (ATR stop / ilk kâr eşiği / +%1 kâr kilidi / 4 saat, komisyon dahil)
                           → etiketli_sinyaller.csv
-03:00 ai_trainer.py     : etiketli_sinyaller.csv + backfill_sinyaller.csv → purged walk-forward
+03:00 ai_trainer.py     : etiketli_sinyaller.csv → purged walk-forward
                           CV (episod bazlı bootstrap) → kapılar: OOS AUC ≥ 0.55, %95 alt sınır > 0.5,
                           katların çoğunda > 0.5, ekonomik permütasyon testi, canlı transfer →
                           geçerse model + kart atomik kaydedilir, bot hot-reload eder;
                           geçmezse ESKİ MODEL KORUNUR (egitim_raporu.json, ai_trainer_history.log)
-(elle) backfill_sinyaller.py --gun 180 --evren 80 : geçmiş sinyaller (kapalı mum modu)
+(elle) backfill_sinyaller.py --gun 180 --evren 80 : geçmiş sinyaller (kapalı mum modu) → etiketli_sinyaller.csv
+(elle) tools/veri_birlestir.py --ekle gelen_etiketli.csv --uygula : diğer makinenin eğitim verisini katar
 ```
 
 ## Redis Key Şeması (prefix: `PORTFOY`)

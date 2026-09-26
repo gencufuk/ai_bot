@@ -205,9 +205,9 @@ def test_kismi_kar_durum_ve_csv(ortam):
     assert db.hget(f'{P}:half_sold', 'DDD/USDT') == '1'
     assert float(db.hget(f'{P}:islem_miktarlari', 'DDD/USDT')) == pytest.approx(10.0)
     assert float(db.hget(f'{P}:adetler', 'DDD/USDT')) == pytest.approx(10.0)
-    v1 = satirlar(tmp / 'core_islem_verileri.csv')
+    assert not (tmp / 'core_islem_verileri.csv').exists()          # tek işlem kaydı: V1 artık yazılmıyor
     v2 = satirlar(tmp / 'core_islem_verileri_v2.csv')
-    assert v1[0]['Cikis_Tipi'] == 'DİNAMİK KISMİ KÂR' and len(v1[0]) == 13
+    assert v2[0]['Cikis_Tipi'] == 'DİNAMİK KISMİ KÂR' and all(k in v2[0] for k in ai_bot.V1_COLUMNS)
     assert v2[0]['Pozisyon_Id'].startswith('DDD/USDT|') and v2[0]['Pump_3s'] == '4.0'
     assert float(v2[0]['Sure_Saat']) == pytest.approx(1.0, abs=0.02)
 

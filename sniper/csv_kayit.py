@@ -17,16 +17,24 @@ Bu modülün garantileri:
     ile yüksek sesle bildirilir.
   - Satır uzunlukları başlıkla uyuşmayan (zaten kaymış) dosyaya yeni satır
     eklenmez; dosya aynen arşivlenir ve bildirilir.
-  - Aynı süreç içindeki thread'ler dosya başına kilitle sıralanır
-    (asyncio.to_thread ile event loop dışında çağrılabilir).
+  - Aynı dosyaya yazanlar sıralanır: süreç içindeki thread'ler (asyncio.to_thread) ve farklı süreçler
+    (bot, etiketleyici, backfill, birleştirme aracı) aynı dosya kilidini bekler. Kilit dosyası sistemin
+    geçici klasöründedir, bot klasörünü kirletmez.
 """
+import contextlib
 import csv
+import hashlib
 import math
 import os
 import tempfile
 import threading
 import time
 from typing import Callable, Iterable, List, Optional, Sequence
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows: yalnız süreç içi kilit
+    fcntl = None
 
 _KILITLER = {}
 _KILITLER_KILIDI = threading.Lock()
@@ -35,6 +43,39 @@ _KILITLER_KILIDI = threading.Lock()
 def _kilit(yol: str) -> threading.Lock:
     with _KILITLER_KILIDI:
         return _KILITLER.setdefault(os.path.abspath(yol), threading.Lock())
+
+
+@contextlib.contextmanager
+def dosya_kilidi(yol: str, bekle_sn: float = 60.0):
+    """Aynı CSV'yi okuyup yeniden yazan süreçleri sıralar. Kilit bekle_sn içinde alınamazsa kilitsiz
+    devam edilir: bot bir işlem kaydını asla kilit yüzünden kaybetmemeli."""
+    with _kilit(yol):
+        fd = None
+        if fcntl is not None:
+            ad = 'sniper_' + hashlib.sha1(os.path.abspath(yol).encode('utf-8')).hexdigest()[:16] + '.lock'
+            try:
+                fd = os.open(os.path.join(tempfile.gettempdir(), ad), os.O_CREAT | os.O_RDWR, 0o600)
+            except OSError:
+                fd = None
+        try:
+            if fd is not None:
+                son = time.time() + bekle_sn
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.time() >= son:
+                            break
+                        time.sleep(0.2)
+            yield
+        finally:
+            if fd is not None:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                os.close(fd)
 
 
 def hucre(deger) -> str:
@@ -150,7 +191,7 @@ def satirlari_ekle(yol: str, satirlar: Sequence[dict], kolonlar: Sequence[str],
     uyari = uyari or (lambda _m: None)
     kolonlar = list(kolonlar)
     ad = os.path.basename(yol)
-    with _kilit(yol):
+    with dosya_kilidi(yol):
         if not os.path.isfile(yol) or os.path.getsize(yol) == 0:
             atomik_yaz(yol, kolonlar, [[hucre(s.get(k)) for k in kolonlar] for s in satirlar])
             return

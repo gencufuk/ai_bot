@@ -220,8 +220,8 @@ SHADOW_COLUMNS = ['Ts', 'Sinyal_Zamani', 'Sembol', 'Sebep', 'Sinyal', 'Fiyat',
 
 
 def _trade_csv_yaz(trade_data, ai, ek):
-    # V1: eski trainer/analizlerle uyumluluk için aynen yazılmaya devam eder
-    satir_ekle(os.path.join(BASE_DIR, 'core_islem_verileri.csv'), trade_data, V1_COLUMNS, uyari=bildir)
+    # Tek işlem kaydı: V2 tüm V1 kolonlarını içerir. Eski core_islem_verileri.csv (V1) artık yazılmıyor;
+    # mevcut V1 dosyası tools/veri_birlestir.py ile V2'ye katılır.
     v2 = dict(trade_data)
     for k, col in V2_FEATURE_MAP.items(): v2[col] = ai.get(k)
     v2.update(ek)

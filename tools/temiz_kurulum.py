@@ -20,6 +20,9 @@ Kullanım (bot DURDURULMUŞKEN):
   cd /root && unzip ai_bot_v18_4_paket.zip
   python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py            # KURU: yalnız planı gösterir
   python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py --uygula   # uygular
+  python3 /root/tools/veri_birlestir.py --uygula               # getirilen veriyi tek düzene birleştirir
+Kurulu bir sistemde yalnız KODU güncellemek (veri dosyalarına dokunmaz; eski kod eski_kod_<tarih>/):
+  python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py --guncelle
 Geri almak:
   python3 /root/tools/temiz_kurulum.py --geri-al /root/eski_bot_<tarih>
 """
@@ -47,8 +50,8 @@ BOT_UZANTILARI = ('.py', '.pyc', '.csv', '.json', '.log', '.txt', '.md', '.out',
 BOT_ADLARI = ('*.bozuk_*', '*.legacy_*', '*.emekli*', '*.yedek*', '*.onarildi*', 'nohup.out', 'screenlog.*',
               'v184_sim_*')
 BOT_KLASORLERI = ('__pycache__', 'sniper', 'tools', 'tests', 'dagitim', 'sim_onbellek')
-DOKUNMA_ADLARI = ('*.rdb', '*.aof', 'appendonlydir', 'yedek_*', 'eski_bot_*', 'v184_kaldirilan_*', 'snap',
-                  'venv', 'env', 'ai_bot_v18_4_paket*', '*.sh')
+DOKUNMA_ADLARI = ('*.rdb', '*.aof', 'appendonlydir', 'yedek_*', 'eski_bot_*', 'eski_kod_*', 'veri_arsiv_*',
+                  'v184_kaldirilan_*', 'snap', 'venv', 'env', 'ai_bot_v18_4_paket*', '*.sh')
 
 
 def _eslesir(ad, desenler):
@@ -135,8 +138,14 @@ def calisan_bot_surecleri(adlar=None):
     return sonuc
 
 
+def _paket_gecmisi(paket):
+    """Kurtarılmış geçmiş dosyaları yalnız ilk kurulum paketinde vardı; güncel paket yalnız koddur
+    (ikinci bir hesaba kurulurken sizin işlem geçmişiniz o hesabın kaydına karışmasın)."""
+    return [a for a in GECMIS if os.path.exists(os.path.join(paket, a))]
+
+
 def paket_kontrol(paket):
-    eksik = [a for a in KOD + GECMIS if not os.path.exists(os.path.join(paket, a))]
+    eksik = [a for a in KOD if not os.path.exists(os.path.join(paket, a))]
     if eksik:
         return f"paket eksik: {eksik}"
     with open(os.path.join(paket, 'ai_bot.py'), encoding='utf-8', errors='replace') as f:
@@ -178,7 +187,8 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
         return 2
     cron = crontab_metni()
     tasinacak, dokunma, bilinmeyen = siniflandir(hedef, paket, cron)
-    cakisan = [a for a in KOD + GECMIS if os.path.exists(os.path.join(hedef, a))
+    kurulacak = KOD + _paket_gecmisi(paket)
+    cakisan = [a for a in kurulacak if os.path.exists(os.path.join(hedef, a))
                and a not in {ad for ad, _ in tasinacak}]
     if cakisan:
         print(f"❌ Hedefte taşınamayan ve yeni dosyalarla aynı adlı öğeler var: {cakisan}. Önce bunları elle kaldırın.")
@@ -195,7 +205,7 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
     _yaz_liste("ARŞİVE TAŞINACAK (eski bot dosyaları)", tasinacak)
     _yaz_liste("DOKUNULMAYACAK", dokunma)
     _yaz_liste("TANINMAYAN — dokunulmayacak, gerekirse elle taşıyın", bilinmeyen)
-    print(f"\nKURULACAK (paketten): {', '.join(KOD + GECMIS)}")
+    print(f"\nKURULACAK (paketten): {', '.join(kurulacak)}")
     print(f"ARŞİVDEN GERİ KOPYALANACAK canlı veri: {', '.join(getirilecek) or '-'}")
     for ad, neden in reddedilen:
         print(f"⚠️ GETİRİLMEYECEK: {ad} — {neden}; arşivde kalır, inceleyin")
@@ -221,18 +231,14 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
     os.makedirs(arsiv)
     for ad, _ in tasinacak:
         shutil.move(os.path.join(hedef, ad), os.path.join(arsiv, ad))
-    for ad in KOD + GECMIS:
-        kaynak = os.path.join(paket, ad)
-        if os.path.isdir(kaynak):
-            shutil.copytree(kaynak, os.path.join(hedef, ad), ignore=shutil.ignore_patterns('__pycache__'))
-        else:
-            shutil.copy2(kaynak, os.path.join(hedef, ad))
+    for ad in kurulacak:
+        _kopyala(os.path.join(paket, ad), os.path.join(hedef, ad))
     getirilen = []
     for ad in getirilecek:
         shutil.copy2(os.path.join(arsiv, ad), os.path.join(hedef, ad))
         getirilen.append(ad)
     with open(os.path.join(arsiv, 'kurulum_manifest.json'), 'w', encoding='utf-8') as f:
-        json.dump({'tarih': damga, 'hedef': hedef, 'tasinan': sorted(tasinan_adlar), 'kurulan': KOD + GECMIS,
+        json.dump({'tarih': damga, 'hedef': hedef, 'tasinan': sorted(tasinan_adlar), 'kurulan': kurulacak,
                    'geri_getirilen': getirilen, 'reddedilen': reddedilen}, f, ensure_ascii=False, indent=1)
     print(f"\n✅ {len(tasinacak)} öğe arşivlendi, V18.4 kuruldu, geri getirilen veri: {', '.join(getirilen) or '-'}")
     for ad, neden in reddedilen:
@@ -248,14 +254,57 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
 
     print(f"""
 SONRAKİ ADIMLAR
-1) Botu her zamanki komutunuzla başlatın (Telegram'a "CORE V18.4" mesajı gelir), ör.:
-     cd {hedef} && nohup {hedef}/venv/bin/python ai_bot.py >> bot.log 2>&1 &
-2) {cron_onerisi(cron, hedef)}
-3) Bir kereye mahsus veri hattı (bot çalışırken de olur):
+1) Eski kurulumdan gelen veri dosyalarını tek düzene birleştirin (önce plan, sonra uygula):
+     python3 {hedef}/tools/veri_birlestir.py
+     python3 {hedef}/tools/veri_birlestir.py --uygula
+2) Botu her zamanki komutunuzla başlatın (Telegram'a "CORE V18.4" mesajı gelir), ör.:
+     cd {hedef} && screen -dmS btc_bot bash -c "source venv/bin/activate && python3 -u ai_bot.py"
+3) {cron_onerisi(cron, hedef)}
+4) Bir kereye mahsus veri hattı (bot çalışırken de olur):
      cd {hedef} && venv/bin/python shadow_labeler.py && venv/bin/python backfill_sinyaller.py --gun 180 --evren 80
-4) Paket klasörü ve zip artık gereksiz:  rm -rf {paket} {paket}.zip
-5) 1-2 hafta sorunsuz çalışınca arşivi silin:  rm -rf {arsiv}
+5) Paket klasörü ve zip artık gereksiz:  rm -rf {paket} {paket}.zip
+6) 1-2 hafta sorunsuz çalışınca arşivi silin:  rm -rf {arsiv}
 Geri almak için:  python3 {hedef}/tools/temiz_kurulum.py --geri-al {arsiv}""")
+    return 0
+
+
+def _kopyala(kaynak, hedef):
+    if os.path.isdir(kaynak):
+        shutil.copytree(kaynak, hedef, ignore=shutil.ignore_patterns('__pycache__'))
+    else:
+        shutil.copy2(kaynak, hedef)
+
+
+def guncelle(hedef, paket=PAKET, simdi=None):
+    """Kurulu sistemde yalnız KODU yeniler. Veri dosyalarına (işlem kaydı, eğitim verisi, model, .env)
+    dokunmaz; mevcut kod silinmez, eski_kod_<tarih>/ klasörüne taşınır."""
+    hedef, paket = os.path.abspath(hedef), os.path.abspath(paket)
+    if os.path.realpath(hedef) == os.path.realpath(paket):
+        print("❌ Bu komut kurulum PAKETİNDEN çalıştırılmalı (ör. python3 /root/ai_bot_v18_4_paket/tools/temiz_kurulum.py --guncelle)")
+        return 2
+    hata = paket_kontrol(paket)
+    if hata:
+        print(f"❌ {hata}")
+        return 2
+    if not os.path.exists(os.path.join(hedef, 'ai_bot.py')):
+        print(f"❌ {hedef} içinde kurulu bot yok; ilk kurulum için --guncelle olmadan çalıştırın.")
+        return 2
+    surecler = calisan_bot_surecleri()
+    if surecler:
+        print("❌ Bot ya da gece işleri çalışıyor; önce durdurun (screen -S btc_bot -X quit):\n   " + "\n   ".join(surecler))
+        return 3
+    damga = (simdi or datetime.datetime.now()).strftime('%Y%m%d_%H%M%S')
+    arsiv = os.path.join(hedef, f'eski_kod_{damga}')
+    os.makedirs(arsiv)
+    for ad in KOD:
+        if os.path.exists(os.path.join(hedef, ad)):
+            shutil.move(os.path.join(hedef, ad), os.path.join(arsiv, ad))
+        _kopyala(os.path.join(paket, ad), os.path.join(hedef, ad))
+    print(f"✅ Kod güncellendi: {', '.join(KOD)}\n   Veri dosyalarına dokunulmadı. Eski kod: {arsiv}\n"
+          f"Sonraki adım: yeni sürüm ilk kez kuruluyorsa veri dosyalarını birleştirin, sonra botu başlatın:\n"
+          f"   python3 {hedef}/tools/veri_birlestir.py            # plan\n"
+          f"   python3 {hedef}/tools/veri_birlestir.py --uygula\n"
+          f"Paket klasörü ve zip artık gereksiz:  rm -rf {paket} {paket}.zip")
     return 0
 
 
@@ -290,9 +339,12 @@ def main(argv=None):
     ap.add_argument('--uygula', action='store_true', help='planı uygula (yoksa yalnız gösterir)')
     ap.add_argument('--geri-al', metavar='ARSIV', help='bu araçla oluşturulmuş arşivi geri yükle')
     ap.add_argument('--kontrolsuz', action='store_true', help='sonda kurulum_kontrol.py çalıştırma')
+    ap.add_argument('--guncelle', action='store_true', help='kurulu sistemde yalnız kodu yenile (veriye dokunmaz)')
     a = ap.parse_args(argv)
     if a.geri_al:
         return geri_al(a.hedef, a.geri_al)
+    if a.guncelle:
+        return guncelle(a.hedef)
     return kur(a.hedef, uygula=a.uygula, kontrol=not a.kontrolsuz)
 
 

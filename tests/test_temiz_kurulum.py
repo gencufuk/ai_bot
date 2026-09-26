@@ -190,3 +190,34 @@ def test_cron_log_dosyalari_ve_cron_onerisi(sunucu, monkeypatch, capsys):
     assert 'cron işinizin log dosyası' in cikti and 'yeni satır EKLEMEYİN' in cikti
     assert 'EKLEMEYİN' not in tk.cron_onerisi('0 3 * * * python /root/ai_trainer.py', '/root')
     assert 'shadow_labeler.py' in tk.cron_onerisi('', '/root') and 'ai_trainer.py' in tk.cron_onerisi('', '/root')
+
+
+def test_guncelle_yalniz_kodu_yeniler(sunucu):
+    kok, paket = sunucu
+    assert tk.kur(kok, paket, uygula=True, kontrol=False, simdi=ZAMAN) == 0
+    with open(os.path.join(kok, 'core_islem_verileri_v2.csv'), 'a', encoding='utf-8') as f:
+        f.write('2026-09-28 09:00:00,B/USDT,MSB,NORMAL,70,3,1,1,1.02,1.8,0.36,Y,1\n')     # bot yeni işlem yazdı
+    once_veri = {ad: _icerik(os.path.join(kok, ad)) for ad in ('core_islem_verileri_v2.csv', 'shadow_sinyaller.csv')}
+    _yaz(os.path.join(paket, 'ai_bot.py'), '# CORE V18.4 yeni surum\n')
+    assert tk.guncelle(kok, paket, simdi=datetime.datetime(2026, 9, 28, 10)) == 0
+    assert _icerik(os.path.join(kok, 'ai_bot.py')) == '# CORE V18.4 yeni surum\n'
+    eski = os.path.join(kok, 'eski_kod_20260928_100000')
+    assert 'V18.4' in _icerik(os.path.join(eski, 'ai_bot.py')) and os.path.exists(os.path.join(eski, 'sniper'))
+    assert {ad: _icerik(os.path.join(kok, ad)) for ad in once_veri} == once_veri          # veri aynen duruyor
+    assert os.path.exists(os.path.join(kok, 'sniper', 'risk_motoru.py'))
+
+
+def test_guncelle_bot_calisirken_ve_kurulum_yokken_reddeder(sunucu, monkeypatch, tmp_path):
+    kok, paket = sunucu
+    assert tk.guncelle(str(tmp_path), paket) == 2                       # kurulu bot yok
+    monkeypatch.setattr(tk, 'calisan_bot_surecleri', lambda *a, **k: ['1 python3 -u ai_bot.py'])
+    assert tk.guncelle(kok, paket) == 3
+
+
+def test_gecmis_dosyasiz_paket_kurulur(sunucu):
+    kok, paket = sunucu
+    for ad in tk.GECMIS:
+        os.remove(os.path.join(paket, ad))
+    assert tk.kur(kok, paket, uygula=True, kontrol=False, simdi=ZAMAN) == 0
+    assert 'V18.4' in _icerik(os.path.join(kok, 'ai_bot.py'))
+    assert not any(os.path.exists(os.path.join(kok, ad)) for ad in tk.GECMIS)

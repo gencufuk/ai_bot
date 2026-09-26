@@ -18,6 +18,9 @@ boş kalır; trainer'ın varsayılan feature listesi bunları kullanmaz.
 Bilinen yanlılık: evren BUGÜNÜN en hacimli paritelerinden seçilir (survivorship).
 Geçmiş hacim filtresi (>12M) uygulanarak kısmen azaltılır.
 
+Çıktı etiketleyicinin de yazdığı tek eğitim dosyasıdır (etiketli_sinyaller.csv, Kaynak=backfill).
+Eski sürümün ayrı backfill_sinyaller.csv dosyası varsa tools/veri_birlestir.py onu bu dosyaya katar.
+
 Kullanım (sunucuda, API key gerekmez; çıktı yarıda kalsa da devam ettirilebilir):
   python backfill_sinyaller.py --gun 180 --evren 80
   python backfill_sinyaller.py --gun 30 --evren 20 --etiket-tf 15m     # hızlı deneme
@@ -38,7 +41,7 @@ from sniper.ozellikler import (MUM_15M_MS, SinyalAyarlari, bir_saati_hizala, ema
                                kanonik_satir, ohlcv_df, sinyal_degerlendir)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HEDEF = 'backfill_sinyaller.csv'
+HEDEF = 'etiketli_sinyaller.csv'   # tek eğitim dosyası (etiketleyiciyle ortak; Kaynak kolonu: backfill)
 TF_MS = {'1m': 60_000, '15m': MUM_15M_MS, '1h': 3_600_000}
 
 # ai_bot.py ile aynı değerler
