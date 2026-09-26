@@ -95,6 +95,40 @@ cat v184_sim_rapor.txt
 ```
 Rapor, Ağustos botunun (V18.0.2) ve V18.4'ün aynı fiyatlarda ne yapacağını karşılaştırır.
 
+## İkinci bir hesapta / başka sunucuda aynı bot
+Kod ve eğitim verisi paylaşılabilir; hesap bilgileri ve işlem kayıtları paylaşılmaz.
+
+1. **Kurulum:** yukarıdaki adımlarla yapılır. Makinede eski bir bot varsa `temiz_kurulum.py` kullanın; bot
+   klasörü `/root` değilse `--hedef` verin. Yeni bir makinede Python ortamı ve Redis yoksa önce onları kurun
+   (`apt install redis-server`). Eksik paketleri `tools/kurulum_kontrol.py` listeler. xgboost sürümü diğer
+   makineyle aynı olsun (3.4): model dosyası paylaşılırken sorun çıkmasın.
+2. **`.env`:** o hesabın kendi değerleri girilir.
+   - Binance API anahtarı: yalnız Spot işlem izni; para çekme KAPALI; IP kısıtı bu sunucunun IP'si.
+   - Telegram: ayrı bir bot token'ı. Aynı token iki makinede çalışırsa Telegram komutları çakışır.
+   - **Elle tutulan coinler:** `MANUEL_COINLER=BTC,ETH,...` yazılmalı. Yazılmazsa bot, spot cüzdandaki 10 USDT
+     üstü her coini (USDT ve BNB hariç) 30 dakika içinde sahiplenir ve kendi kurallarıyla satar. En temizi bot
+     hesabında yalnız USDT (+ komisyon için BNB) tutmaktır.
+3. **Sunucu saati UTC olsun.** `date` ile bakın; UTC değilse `timedatectl set-timezone Etc/UTC` çalıştırın.
+   İşlem kayıtları ve AI'ın saat feature'ları UTC varsayar; cron saatleri de UTC olur.
+4. **Kurulumdan SONRA ilk makineden kopyalayın:**
+   - `core_xgboost_model.json`: zorunlu. Bloklama modunda model yoksa bot alım yapmaz.
+   - `etiketli_sinyaller.csv` ve `backfill_sinyaller.csv`: eğitim verisi. Etiketler fiyat verisinden hesaplandığı
+     için iki hesabın verisi aynı derecede geçerlidir; backfill piyasa verisidir, iki makinede de aynıdır.
+
+   Kopyalamayın:
+   - `core_islem_verileri*.csv`: işlem kayıtları hesaba özeldir; karışırsa o hesabın istatistiği bozulur.
+   - `shadow_sinyaller.csv`: zaten etiketli dosyanın içinde.
+   - `.env` ve loglar.
+
+   Örnek:
+   ```bash
+   scp /root/core_xgboost_model.json /root/etiketli_sinyaller.csv /root/backfill_sinyaller.csv root@DIGER_IP:/root/
+   ```
+5. **Cron:** aynı saatlerle kurulur (02:45 etiketleyici, 03:00 trainer).
+
+İki hesap aynı sinyallere neredeyse aynı anda girer. Bu teknik bir sorun değildir, ama sonuçlar birbiriyle
+yüksek korelasyonlu olur: kötü bir hafta ikisini birden vurur.
+
 ## Geri dönüş
 ```bash
 python3 /root/tools/temiz_kurulum.py --geri-al /root/eski_bot_<tarih>
