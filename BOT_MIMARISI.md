@@ -97,7 +97,9 @@ yapılır, aynı anda çalışsalar da satır kaybolmaz.
                           → etiketli_sinyaller.csv
 03:00 ai_trainer.py     : etiketli_sinyaller.csv → purged walk-forward
                           CV (episod bazlı bootstrap) → kapılar: OOS AUC ≥ 0.55, %95 alt sınır > 0.5,
-                          katların çoğunda > 0.5, ekonomik permütasyon testi, canlı transfer →
+                          katların çoğunda > 0.5, ekonomik permütasyon testi, canlı transfer,
+                          canlı kanıt (≥50 tam kayıtlı canlı olay). Doğrulama yalnız tüm feature'ları
+                          dolu satırlarla (eski formatlı kayıtlar eğitime girer, doğrulamaya girmez) →
                           geçerse model + kart atomik kaydedilir, bot hot-reload eder;
                           geçmezse ESKİ MODEL KORUNUR (egitim_raporu.json, ai_trainer_history.log)
 (elle) backfill_sinyaller.py --gun 180 --evren 80 : geçmiş sinyaller (kapalı mum modu) → etiketli_sinyaller.csv

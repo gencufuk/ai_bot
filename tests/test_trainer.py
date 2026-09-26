@@ -136,3 +136,37 @@ def test_iki_hesabin_ayni_sinyali_canli_esikte_tek_olay_sayilir(tmp_path, monkey
     assert e['n_canli_oos'] >= tr.MIN_CANLI_ESIK > e['n_canli_episod']
     assert abs(e['n_canli_oos'] - 2 * e['n_canli_episod']) <= 2
     assert e['esik_kaynagi'] == 'havuz'
+
+
+def test_eski_formatli_canli_satirlar_dogrulamaya_ve_esige_girmez(tmp_path, monkeypatch):
+    """Eski kayıtlarda (V18.0-18.3) yeni ölçümler yok: canlı satırlarda Piyasa_Genislik boş, backfill'de dolu.
+    Boş hücre satırın kaynağını ele verir; bu satırlar eğitime girer ama doğrulamaya, canlı eşiğe ve canlı
+    kanıta sayılmaz. Tam kayıtlı canlı veri birikmeden model yayınlanmaz."""
+    df = sentetik(1500, sinyal_gucu=1.0, seed=7, canli_orani=0.2)
+    canli = (df['Kaynak'] == 'shadow').to_numpy()
+    df.loc[canli, 'Piyasa_Genislik'] = np.nan
+    df.loc[canli, 'Etiket_Getiri'] = np.abs(df.loc[canli, 'Etiket_Getiri'])     # kaynak farkı: canlı hep kârlı
+    yollar = kur(tmp_path, monkeypatch, df)
+    rapor = tr.egit(yollar, kuru=True)
+    assert rapor['tam_satir'] == {'n': int((~canli).sum()), 'canli': 0, 'canli_eksik': int(canli.sum())}
+    assert rapor['canli_eksik_feature'] == {'Piyasa_Genislik': 1.0}
+    assert rapor['dagilim_kaymasi'] is None                    # tam kayıtlı canlı yok: ölçülemez
+    secilen = rapor['adaylar'][rapor['secilen']]
+    assert secilen['n_oos'] < int((~canli).sum())               # yalnız tam satırlar değerlendirildi
+    assert rapor['esik']['n_canli_episod'] == 0 and rapor['esik']['esik_kaynagi'] == 'havuz'
+    assert rapor['kapilar']['canli_kanit'] is False and rapor['karar'] == 'reddedildi'
+    assert not (tmp_path / 'core_xgboost_model.json').exists()
+
+
+def test_bos_featureli_kaynak_farki_auc_yi_sisirmez(tmp_path, monkeypatch):
+    """Sinyalde bilgi yokken canlı satırlar hem daha kârlı hem de bir feature'ı boşsa, model boş hücreden
+    kaynağı tanıyıp karışık AUC'yi şişirebilir. Doğrulama tam satırlarla yapıldığı için AUC ~0.5 kalır."""
+    df = sentetik(2000, sinyal_gucu=0.0, seed=11, canli_orani=0.3)
+    canli = (df['Kaynak'] == 'shadow').to_numpy()
+    df.loc[canli, 'Piyasa_Genislik'] = np.nan
+    df.loc[canli, 'Etiket_Getiri'] = df.loc[canli, 'Etiket_Getiri'] + 0.03     # canlı çoğunlukla kârlı
+    rapor = tr.egit(kur(tmp_path, monkeypatch, df), kuru=True)
+    for aday in ('xgb_d1', 'xgb_d2'):
+        a = rapor['adaylar'][aday]['oos_auc']
+        assert a is None or a < tr.MIN_AUC
+    assert rapor['karar'] != 'kuru_gecti'

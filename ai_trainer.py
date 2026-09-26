@@ -23,7 +23,11 @@ V3:
     episod (aynı sembolde 4 saat içindeki ardışık sinyaller) bazlı bootstrap güven aralığı.
   - Adaylar: depth-1 (stump / GAM benzeri) ve depth-2 XGBoost; lineer baz model (sadece kıyas).
   - Kapılar: havuzlanmış OOS AUC >= MIN_AUC, %95 alt güven sınırı > 0.5, katların çoğunda > 0.5,
-    ekonomik test (en kötü %30'u engellemek ortalama getiriyi anlamlı artırıyor mu, permütasyon).
+    ekonomik test (en kötü %30'u engellemek ortalama getiriyi anlamlı artırıyor mu, permütasyon),
+    canlı kanıt (en az MIN_CANLI_ESIK tam kayıtlı canlı olay) ve canlı transfer.
+  - Doğrulama, eşik ve kapılar yalnız seçilen feature'ların HEPSİ dolu satırlarla hesaplanır: botun canlıda
+    skorlayacağı satırlar bunlardır. Eski kayıtlarda (V18.0–18.3) yeni ölçümler yok; boş hücre satırın
+    kaynağını ele verir ve AUC'yi kaynak farkıyla şişirir. Bu satırlar eğitime girer, doğrulamaya girmez.
   - Eşik OPTİMİZE EDİLMEZ: OOS skorlarının ENGELLEME_ORANI kantili (seçim iyimserliği yok);
     yeterli canlı örnek varsa canlı (core+shadow) skorların kantili: backfill kapalı mumla, canlı bot
     kısmi mumla çalıştığı için havuz eşiği canlıda farklı oranda engelleyebilir (raporlanır).
@@ -69,7 +73,7 @@ BOOT_N, PERM_N = 2000, 5000
 SADECE_BTC_OK = True       # canlı bot BTC_OK=False iken sinyal analiz etmez: dağılımı eşle
 CANLI_KAYNAKLAR = ('core', 'shadow')
 CANLI_AGIRLIK = 1.0        # canlı örneklere ek ağırlık (dağılım kaymasında >1 denenebilir)
-MIN_CANLI_ESIK = 50        # bu kadar canlı OOS olay (episod) varsa eşik canlı skorların kantilinden alınır
+MIN_CANLI_ESIK = 50        # tam kayıtlı canlı OOS olay (episod) sayısı: altında model yayınlanmaz; eşik canlı kantilden
 ESKI_FILTREYI_EMEKLI_ET = True
 
 # Varsayılan feature'lar: geçmişe dönük üretilebilen (backfill) ve ölçekten bağımsız olanlar.
@@ -245,8 +249,10 @@ def lineer_baz(X_tr, y_tr, w_tr, X_te, lam=1.0):
     return 1 / (1 + np.exp(-np.clip(z(X_te) @ beta, -30, 30)))
 
 
-def capraz_dogrula(df, X, aday):
+def capraz_dogrula(df, X, aday, degerlendir=None):
+    """Walk-forward OOS skorları; kat AUC'leri yalnız `degerlendir` satırlarında (varsayılan hepsi)."""
     ts, y, w = df['Ts'].to_numpy(), df['y'].to_numpy(), df['w'].to_numpy()
+    degerlendir = np.ones(len(df), bool) if degerlendir is None else np.asarray(degerlendir, bool)
     k = CV_KAT if len(df) >= 500 else 3
     oos = np.full(len(df), np.nan)
     kat_auc = []
@@ -259,7 +265,8 @@ def capraz_dogrula(df, X, aday):
             m = xgb_model(ADAYLAR[aday])
             m.fit(X.iloc[egitim], y[egitim], sample_weight=w[egitim])
             oos[test] = m.predict_proba(X.iloc[test])[:, 1]
-        kat_auc.append(auc(y[test], oos[test]))
+        d = test[degerlendir[test]]
+        kat_auc.append(auc(y[d], oos[d]) if len(d) else None)
     return oos, kat_auc
 
 
@@ -308,16 +315,33 @@ def egit(yollar, kuru=False):
     featurelar, elenen = feature_sec(df, aday_feat)
     X = ozellik_matrisi(df, featurelar)
     rapor['featurelar'], rapor['elenen_featurelar'] = featurelar, elenen
-    rapor['dagilim_kaymasi'] = dagilim_kaymasi(df, X)
+    # Botun canlıda skorlayacağı satırlar: seçilen feature'ların hepsi dolu (bkz. modül açıklaması).
+    tam = X.notna().all(axis=1).to_numpy()
+    canli_kaynak = df['Kaynak'].isin(CANLI_KAYNAKLAR).to_numpy()
+    rapor['tam_satir'] = {'n': int(tam.sum()), 'canli': int((tam & canli_kaynak).sum()),
+                          'canli_eksik': int((~tam & canli_kaynak).sum())}
+    eksik = X[canli_kaynak].isna().mean() if canli_kaynak.any() else pd.Series(dtype=float)
+    rapor['canli_eksik_feature'] = {f: round(float(v), 3) for f, v in
+                                    eksik[eksik > 0].sort_values(ascending=False).items()}
+    if rapor['tam_satir']['canli_eksik']:
+        log(f"🧩 {rapor['tam_satir']['canli_eksik']} canlı satırda seçilen feature'lardan en az biri boş (eski kayıt "
+            f"formatı): eğitime girer, doğrulamaya girmez. En eksik: {list(rapor['canli_eksik_feature'])[:3]}")
+    if tam.sum() < MIN_ORNEK:
+        log(f"⚠️ Tüm feature'ları dolu satır {int(tam.sum())} (gereken {MIN_ORNEK}): doğrulanamaz, model korunuyor.")
+        rapor['karar'] = 'yetersiz_veri'
+        return rapor
+    rapor['dagilim_kaymasi'] = dagilim_kaymasi(df[tam], X[tam])
     if rapor['dagilim_kaymasi']:
         log(f"🔎 Canlı↔backfill ayırt edilebilirliği AUC {rapor['dagilim_kaymasi']['auc']:.2f} "
             f"(0.5 ideal); en ayırt edici: {list(rapor['dagilim_kaymasi']['en_ayirt_edici'])[:3]}")
+    else:
+        log("🔎 Tam kayıtlı canlı satır 30'dan az: canlı↔backfill dağılım farkı henüz ölçülemiyor.")
 
     y, ep = df['y'].to_numpy(), df['episod'].to_numpy()
     sonuclar = {}
     for aday in ['lineer'] + list(ADAYLAR):
-        oos, kat_auc = capraz_dogrula(df, X, aday)
-        m = ~np.isnan(oos)
+        oos, kat_auc = capraz_dogrula(df, X, aday, tam)
+        m = ~np.isnan(oos) & tam
         a = auc(y[m], oos[m]) if m.sum() else None
         alt, ust = episod_bootstrap(y[m], oos[m], ep[m]) if a is not None else (None, None)
         sonuclar[aday] = {'oos_auc': a, 'ci95': [alt, ust], 'kat_auc': kat_auc, 'n_oos': int(m.sum()), '_oos': oos}
@@ -332,11 +356,11 @@ def egit(yollar, kuru=False):
     en_iyi = max(agac, key=lambda k: agac[k]['oos_auc'])
     s = sonuclar[en_iyi]
     oos = s['_oos']
-    m = ~np.isnan(oos)
-    ilk_sinyal = m & ~df['episod'].duplicated().to_numpy()
+    m = ~np.isnan(oos) & tam
+    ilk_sinyal = m & ~df['episod'].where(m).duplicated().to_numpy()     # her episodun ilk tam satırı
     eko = ekonomik_test(df['Etiket_Getiri'].to_numpy()[ilk_sinyal], oos[ilk_sinyal])
     eko['n_episod'] = int(ilk_sinyal.sum())
-    canli = m & df['Kaynak'].isin(CANLI_KAYNAKLAR).to_numpy()
+    canli = m & canli_kaynak
     # Canlı kanıt bağımsız OLAY sayısıyla ölçülür: iki makinenin eğitim verisi birleşince aynı sinyal iki satır
     # olur (aynı coin, dakikalar arayla); aynı episoddaki satırlar tek olaydır.
     n_canli = int(df.loc[canli, 'episod'].nunique())
@@ -359,6 +383,7 @@ def egit(yollar, kuru=False):
         'kat_kararliligi': kat_ok >= math.ceil(0.6 * len(s['kat_auc'])),
         'ekonomik': eko['artis'] > 0 and eko['p'] < EKONOMIK_P,
         'canli_transfer': canli_auc is None or n_canli < 100 or canli_auc >= 0.5,
+        'canli_kanit': n_canli >= MIN_CANLI_ESIK,
     }
     rapor.update({'adaylar': {k: {kk: vv for kk, vv in v.items() if kk != '_oos'} for k, v in sonuclar.items()},
                   'secilen': en_iyi, 'ekonomik': eko, 'canli_oos_auc': canli_auc, 'kapilar': kapilar,
@@ -367,6 +392,9 @@ def egit(yollar, kuru=False):
         f"{eko['ort_getiri_hepsi'] * 100:+.2f}% → {eko['ort_getiri_gecen'] * 100:+.2f}% (p={eko['p']:.3f}) | "
         f"canlı OOS AUC: {canli_auc if canli_auc is None else round(canli_auc, 3)}")
 
+    if not kapilar['canli_kanit']:
+        log(f"   canlı kanıt: {n_canli} tam kayıtlı canlı olay (gereken {MIN_CANLI_ESIK}); V18.4 kayıtları "
+            f"biriktikçe dolar.")
     if not all(kapilar.values()):
         basarisiz = [k for k, v in kapilar.items() if not v]
         log(f"🛑 Kapılar geçilemedi ({', '.join(basarisiz)}): model KAYDEDİLMEDİ, eski model korunuyor.")

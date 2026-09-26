@@ -101,7 +101,9 @@ V18.4 `AI_GOLGE_MOD = False` ile core modele göre bloklar (skor < 0.65 → alı
 de aynı modelle aynı eşikte bloklama yapıyordu; bu ayar Ağustos davranışını korur.
 
 Gece eğitimi "ezberleme" yapmaz. V3 trainer yeni bir modeli yalnız örneklem dışı testleri geçerse yayınlar;
-geçemezse mevcut model kalır. Çoğu gece "yayınlanmadı" görmeniz normaldir.
+geçemezse mevcut model kalır. Çoğu gece "yayınlanmadı" görmeniz normaldir. Testler yalnız tüm ölçümleri dolu
+kayıtlarla yapılır: eski formatlı işlem kayıtlarında (31 Mayıs – 25 Eylül) yeni ölçümler yok. V18.4'ün tam
+kayıtlı en az 50 canlı sinyali birikmeden yeni model yayınlanmaz.
 
 Elle tuttuğunuz coin varsa `.env` dosyasına ekleyin: `MANUEL_COINLER=ETH,SOL`. Bot bu coinleri hiçbir koşulda satmaz.
 
