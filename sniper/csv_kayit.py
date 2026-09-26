@@ -117,7 +117,7 @@ def baslik_gibi(ilk_satir: Sequence[str], bilinen_kolonlar: Sequence[str]) -> bo
     return ilk_satir[0] in bilinen and eslesen * 2 >= len(ilk_satir)
 
 
-def _sona_ekle(yol: str, degerler: Sequence[str]) -> None:
+def _sona_ekle(yol: str, satirlar: Sequence[Sequence[str]]) -> None:
     # Önceki bir çökme son satırı '\n' olmadan bıraktıysa yeni satır ona yapışmasın
     with open(yol, 'rb') as f:
         f.seek(0, os.SEEK_END)
@@ -128,7 +128,7 @@ def _sona_ekle(yol: str, degerler: Sequence[str]) -> None:
     with open(yol, 'a', encoding='utf-8', newline='') as f:
         if son_bayt != b'\n':
             f.write('\n')
-        csv.writer(f, lineterminator='\n').writerow(list(degerler))
+        csv.writer(f, lineterminator='\n').writerows([list(s) for s in satirlar])
         f.flush()
         os.fsync(f.fileno())
 
@@ -139,12 +139,20 @@ def satir_ekle(yol: str, satir: dict, kolonlar: Sequence[str],
 
     `uyari(mesaj)`: veri korunması için olağandışı bir işlem yapıldığında çağrılır
     (arşivleme, başlık ekleme, şema genişletme). Bot bunu Telegram'a iletir."""
+    satirlari_ekle(yol, [satir], kolonlar, uyari)
+
+
+def satirlari_ekle(yol: str, satirlar: Sequence[dict], kolonlar: Sequence[str],
+                   uyari: Optional[Callable[[str], None]] = None) -> None:
+    """satir_ekle'nin toplu hali: aynı garantiler, tek fsync (labeler/backfill için)."""
+    if not satirlar:
+        return
     uyari = uyari or (lambda _m: None)
     kolonlar = list(kolonlar)
     ad = os.path.basename(yol)
     with _kilit(yol):
         if not os.path.isfile(yol) or os.path.getsize(yol) == 0:
-            atomik_yaz(yol, kolonlar, [[hucre(satir.get(k)) for k in kolonlar]])
+            atomik_yaz(yol, kolonlar, [[hucre(s.get(k)) for k in kolonlar] for s in satirlar])
             return
 
         with open(yol, encoding='utf-8-sig', newline='') as f:
@@ -182,4 +190,4 @@ def satir_ekle(yol: str, satir: dict, kolonlar: Sequence[str],
                         baslik = yeni_baslik
                     # eksik yoksa: dosyada kodun artık yazmadığı kolonlar var; bunlar boş kalır, silinmez
 
-        _sona_ekle(yol, [hucre(satir.get(k)) for k in baslik])
+        _sona_ekle(yol, [[hucre(s.get(k)) for k in baslik] for s in satirlar])

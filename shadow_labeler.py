@@ -1,123 +1,195 @@
 # -*- coding: utf-8 -*-
 """
-SHADOW LABELER
-- shadow_sinyaller.csv'deki (botun girmediği sinyaller) 5 saatten eski, henüz
-  etiketlenmemiş satırları alır, sinyal sonrası 4 saatlik 15m mumlarla sanal
-  sonucu hesaplar ve shadow_sinyaller_etiketli.csv'ye EKLER (append-only,
-  bot yazmaya devam ederken güvenlidir).
-- İlerleme shadow_labeler_state.txt'de tutulur; aynı satır iki kez etiketlenmez.
-- Cron'da trainer'dan ÖNCE çalıştırın, ör: 45 2 * * * (trainer 03:00 ise).
-- Yalnızca herkese açık OHLCV verisi kullanır, API key gerektirmez.
+SHADOW LABELER V2 — core + shadow sinyallerini TEK TİP etiketle etiketler.
+
+V1'den farklar:
+- Etiket, botun kendi risk parametrelerinden türetilen ATR ölçekli bariyerlerle ve
+  komisyon dahil hesaplanır (sniper/etiketleme.py). V1: sabit +%4/-%3, komisyonsuz.
+- 1 dakikalık mumlar sinyalin DAKİKASINDAN başlar. V1 `since=ts+1` ile sinyalin
+  içinde bulunduğu 15m mumu tamamen atlıyordu: sinyalden sonraki ilk ≤15 dakika
+  (stopların çoğunun gerçekleştiği pencere) simülasyona hiç girmiyordu.
+- Core işlemler de AYNI fonksiyonla etiketlenir -> core ve shadow güvenle birleşir.
+- Durum dosyası yok: çıktıdaki (Anahtar, Etiket_Surumu) çiftleri durumun kendisidir.
+  Verisi henüz tamamlanmamış sinyal sonraki çalıştırmada tekrar denenir; etiket
+  sürümü değişirse (sniper.etiketleme.ETIKET_SURUMU) her şey otomatik yeniden etiketlenir.
+- Çıktı: etiketli_sinyaller.csv. Eski shadow_sinyaller_etiketli.csv'ye dokunulmaz.
+
+Cron: trainer'dan önce, ör. 45 2 * * * (trainer 03:00 ise). API key gerekmez.
 """
+import argparse
 import csv
+import glob
 import os
 import time
+from collections import Counter
+
+import pandas as pd
+
+from sniper import etiket_deposu as depo
+from sniper.etiketleme import sinyali_etiketle
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-KAYNAK = os.path.join(BASE_DIR, 'shadow_sinyaller.csv')
-HEDEF = os.path.join(BASE_DIR, 'shadow_sinyaller_etiketli.csv')
-DURUM_DOSYASI = os.path.join(BASE_DIR, 'shadow_labeler_state.txt')
+SHADOW_KAYNAK = 'shadow_sinyaller.csv'
+CORE_KAYNAK_DESENLERI = ['core_islem_verileri_v2.csv', 'core_islem_verileri_v2*.onarildi.csv']
+HEDEF = 'etiketli_sinyaller.csv'
 
-BEKLEME_SAAT = 5        # sinyalin üzerinden en az bu kadar zaman geçmiş olmalı
-PENCERE_MUM = 16        # simülasyon penceresi: 16 x 15m = 4 saat (botun MAX_BEKLEME_SAATI)
-TP_PCT = 0.04           # sanal kâr al: botun "kısmi kâr" bölgesi
-SL_PCT = -0.03          # sanal stop: botun tipik stop bölgesi
+PENCERE_DK = 240                  # 4 saat (MAX_BEKLEME_SAATI), 1m mum
+BEKLEME_DK = PENCERE_DK + 15      # sinyal en az bu kadar eski olmalı
+VERI_YOK_SAAT = 48                # bu kadar eski olup hâlâ verisi eksikse kalıcı VERI_YOK
+KASA = {'BALİNA': 40.0, 'NORMAL': 20.0}
+KISMI_CIKISLAR = {'DİNAMİK KISMİ KÂR', '🚀 MOON BAG (%50 VURKAÇ)'}
 
 
-def sanal_sonuc(entry, mumlar):
-    """Basit bracket simülasyonu. Muhafazakâr varsayım: aynı mumda hem TP hem SL
-    seviyesi görülürse STOP sayılır (mum içi sıralama bilinemez)."""
-    max_k, min_k = 0.0, 0.0
-    for ts, o, h, l, c, v in mumlar[:PENCERE_MUM]:
-        max_k = max(max_k, h / entry - 1)
-        min_k = min(min_k, l / entry - 1)
-        if (l / entry - 1) <= SL_PCT:
-            return SL_PCT * 100, max_k * 100, min_k * 100
-        if (h / entry - 1) >= TP_PCT:
-            return TP_PCT * 100, max_k * 100, min_k * 100
-    son_kapanis = mumlar[min(PENCERE_MUM, len(mumlar)) - 1][4]
-    return (son_kapanis / entry - 1) * 100, max_k * 100, min_k * 100
+def _csv_satirlari(yol):
+    """Başlıkla aynı uzunluktaki satırlar (kaymış satırlar atlanır ve sayılır)."""
+    with open(yol, encoding='utf-8-sig', newline='') as f:
+        tum = list(csv.reader(f))
+    if not tum:
+        return []
+    baslik, govde = tum[0], tum[1:]
+    uygun = [dict(zip(baslik, r)) for r in govde if len(r) == len(baslik)]
+    if len(uygun) != len(govde):
+        print(f"⚠️ {os.path.basename(yol)}: {len(govde) - len(uygun)} kaymış satır atlandı (tools/csv_onar.py)")
+    return uygun
+
+
+def _rejim(r):
+    adx = depo.sayi(r.get('BTC_ADX'))
+    if adx == adx:  # NaN değil
+        return 'TREND' if adx >= 20 else 'YATAY'
+    return 'YATAY' if r.get('Sebep') == 'REJIM_YATAY' else ''
+
+
+def shadow_adaylari(yol):
+    if not os.path.exists(yol):
+        return []
+    adaylar = []
+    for r in _csv_satirlari(yol):
+        try:
+            ts = int(float(r['Ts']))
+            fiyat = float(r['Fiyat'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        adaylar.append({'Anahtar': f"S|{ts}|{r['Sembol']}", 'Kaynak': 'shadow', 'Ts': ts, 'Sembol': r['Sembol'],
+                        'Sebep': r.get('Sebep'), 'Sinyal': r.get('Sinyal'), 'Fiyat': fiyat, 'Kasa_Tipi': '',
+                        'BTC_OK': 1, 'Rejim': _rejim(r), **depo.feature_alanlari(r)})
+    return adaylar
+
+
+def core_pozisyonlari(yollar):
+    """V2 işlem satırlarını pozisyonlara indirger (kısmi + tam çıkış). Yalnızca KAPANMIŞ pozisyonlar."""
+    satirlar, gorulen = [], set()
+    for yol in yollar:
+        for r in _csv_satirlari(yol):
+            a = (r.get('Islem_Zamani'), r.get('Sembol'), r.get('Cikis_Tipi'))
+            if a in gorulen:
+                continue
+            gorulen.add(a)
+            satirlar.append(r)
+    if not satirlar:
+        return []
+    df = pd.DataFrame(satirlar)
+    for k in ['Giris_Fiyat', 'Net_Kar_USDT', 'Sure_Saat', 'Giris_RSI', 'Giris_Vol_Oran', 'Giris_ATR_Pct']:
+        df[k] = pd.to_numeric(df[k], errors='coerce') if k in df.columns else float('nan')
+    # Islem_Zamani sunucu yerel saatiyle yazılıyor; sunucu UTC (shadow Ts ile doğrulandı)
+    df['_t'] = pd.to_datetime(df['Islem_Zamani'], errors='coerce', format='mixed').dt.tz_localize('UTC')
+    df = df.dropna(subset=['_t', 'Giris_Fiyat', 'Net_Kar_USDT'])
+    cikis_ms = (df['_t'] - pd.Timestamp(0, tz='UTC')) // pd.Timedelta(milliseconds=1)   # çözünürlükten bağımsız
+    df['_giris_ms'] = (cikis_ms - (df['Sure_Saat'].fillna(0) * 3600_000)).round().astype('int64')
+    if 'Giris_Ts' in df.columns:
+        gts = pd.to_numeric(df['Giris_Ts'], errors='coerce')
+        df['_giris_ms'] = gts.fillna(df['_giris_ms']).astype('int64')
+    pid = df['Pozisyon_Id'] if 'Pozisyon_Id' in df.columns else pd.Series('', index=df.index)
+    yedek_anahtar = (df['Sembol'].astype(str) + '|' + df['Giris_Fiyat'].astype(str) + '|' +
+                     df['Giris_RSI'].astype(str) + '|' + df['Giris_Vol_Oran'].astype(str))
+    df['_grup'] = pid.where(pid.fillna('') != '', yedek_anahtar)
+
+    adaylar = []
+    for _, g in df.groupby('_grup', sort=False):
+        g = g.sort_values('_t')
+        if all(c in KISMI_CIKISLAR for c in g['Cikis_Tipi']):
+            continue  # pozisyon hâlâ açık: gerçekleşen sonuç eksik
+        ilk = g.iloc[0].to_dict()
+        giris_ms = int(g['_giris_ms'].min())
+        pozisyon_id = ilk.get('Pozisyon_Id') or f"{ilk['Sembol']}|{giris_ms}"
+        kasa_tipi = ilk.get('Kasa_Tipi') or 'NORMAL'
+        adaylar.append({'Anahtar': f"C|{pozisyon_id}", 'Kaynak': 'core', 'Ts': giris_ms, 'Sembol': ilk['Sembol'],
+                        'Sebep': 'ISLEM', 'Sinyal': ilk.get('Sinyal'), 'Fiyat': float(ilk['Giris_Fiyat']),
+                        'Kasa_Tipi': kasa_tipi, 'BTC_OK': 1, 'Rejim': _rejim(ilk),
+                        'Pozisyon_Id': pozisyon_id,
+                        'Gercek_Getiri': round(float(g['Net_Kar_USDT'].sum()) / KASA.get(kasa_tipi, 20.0), 6),
+                        'Gercek_Cikis': ' + '.join(g['Cikis_Tipi'].astype(str)),
+                        **depo.feature_alanlari(ilk)})
+    return adaylar
+
+
+def mumlari_getir(ex, sembol, ts_ms):
+    bas = (int(ts_ms) // 60_000) * 60_000   # sinyalin dakikası DAHİL (V1 ilk 15m mumu atlıyordu)
+    return ex.fetch_ohlcv(sembol, '1m', since=bas, limit=PENCERE_DK + 1)
+
+
+def etiketle(ex, adaylar, simdi_ms, hedef, flush_n=200):
+    import ccxt
+    yeni, sayac = [], Counter()
+    for a in adaylar:
+        try:
+            mumlar = mumlari_getir(ex, a['Sembol'], a['Ts'])
+        except ccxt.BadSymbol:
+            yeni.append({**a, **depo.etiket_alanlari(None)}); sayac['veri_yok'] += 1
+            continue
+        except Exception as e:  # ağ hatası vb.: sonraki çalıştırmada tekrar denenir
+            print(f"⚠️ {a['Sembol']} mumları alınamadı, atlandı: {e}")
+            sayac['hata'] += 1
+            continue
+        s = sinyali_etiketle(a['Fiyat'], depo.sayi(a.get('Giris_ATR_Pct'), 2.5), depo.is_whale_tahmini(a),
+                             mumlar, kayma_uygula=(a['Kaynak'] != 'core'))
+        if s is None:
+            if simdi_ms - a['Ts'] > VERI_YOK_SAAT * 3600_000:
+                yeni.append({**a, **depo.etiket_alanlari(None)}); sayac['veri_yok'] += 1
+            else:
+                sayac['bekliyor'] += 1
+            continue
+        yeni.append({**a, **depo.etiket_alanlari(s)}); sayac[a['Kaynak']] += 1
+        if len(yeni) >= flush_n:
+            depo.yaz(hedef, yeni); yeni = []
+    depo.yaz(hedef, yeni)
+    return sayac
+
+
+def ozet(hedef):
+    df = depo.oku([hedef])
+    df = df[df['Etiket_Sonuc'] != depo.VERI_YOK]
+    if df.empty:
+        return
+    print("\n📊 Etiket özeti (net getiri, komisyon dahil):")
+    g = df.groupby(['Kaynak', 'Sebep']).agg(n=('Anahtar', 'size'), ort_getiri=('Etiket_Getiri', 'mean'),
+                                           pozitif=('Etiket_Getiri', lambda s: (s > 0).mean()))
+    print(g.round(4).to_string())
+    core = df[df['Kaynak'] == 'core'].dropna(subset=['Gercek_Getiri'])
+    if len(core) >= 5:
+        r = core['Etiket_Getiri'].corr(core['Gercek_Getiri'], method='spearman')
+        print(f"Core: etiket ↔ gerçekleşen getiri Spearman = {r:.2f} (n={len(core)}) — etiketin temsil gücü")
 
 
 def main():
-    import ccxt  # fonksiyon içinde: modül testlerde borsasız da import edilebilsin
-
-    if not os.path.exists(KAYNAK):
-        print("Etiketlenecek shadow verisi yok.")
-        return
-
-    son_ts = 0
-    if os.path.exists(DURUM_DOSYASI):
-        try:
-            son_ts = int(open(DURUM_DOSYASI).read().strip() or 0)
-        except ValueError:
-            son_ts = 0
-
-    with open(KAYNAK, encoding='utf-8') as f:
-        satirlar = list(csv.DictReader(f))
-
+    ap = argparse.ArgumentParser(description="Core + shadow sinyallerini tek tip etiketle etiketler.")
+    ap.add_argument('--limit', type=int, default=0, help='en fazla N sinyal etiketle (0 = hepsi)')
+    a = ap.parse_args()
+    import ccxt
+    ex = ccxt.binance({'enableRateLimit': True})
+    hedef = os.path.join(BASE_DIR, HEDEF)
+    core_yollari = sorted({p for d in CORE_KAYNAK_DESENLERI for p in glob.glob(os.path.join(BASE_DIR, d))})
+    etiketli = depo.etiketli_anahtarlar(hedef)
     simdi_ms = int(time.time() * 1000)
-    sinir_ms = simdi_ms - BEKLEME_SAAT * 3600 * 1000
-
-    exchange = ccxt.binance({'enableRateLimit': True})
-    yeni, islenen_ts = [], son_ts
-
-    for r in satirlar:
-        r.pop(None, None)  # başlıktan uzun satırların fazla alanları etiket kolonlarına karışmasın
-        try:
-            ts = int(float(r['Ts']))
-        except (KeyError, ValueError, TypeError):
-            continue
-        if ts <= son_ts:
-            continue           # zaten etiketlendi
-        if ts > sinir_ms:
-            break              # kayıtlar kronolojik: gerisi de çok taze
-        try:
-            mumlar = exchange.fetch_ohlcv(r['Sembol'], '15m', since=ts + 1, limit=PENCERE_MUM + 1)
-            if len(mumlar) < PENCERE_MUM:
-                if ts < simdi_ms - 48 * 3600 * 1000:
-                    islenen_ts = ts
-                    continue   # 48 saattir veri tamamlanmadıysa muhtemelen delist: atla
-                break          # veri henüz tamam değil, sonraki çalışmada dene
-            entry = float(r['Fiyat'])
-            sonuc, max_k, min_k = sanal_sonuc(entry, mumlar)
-            r.update({'Sanal_Sonuc_Pct': round(sonuc, 3),
-                      'Max_Kar_Pct': round(max_k, 3),
-                      'Min_Kar_Pct': round(min_k, 3)})
-            yeni.append(r)
-            islenen_ts = ts
-        except Exception as e:
-            print(f"⚠️ {r.get('Sembol')} etiketlenemedi, atlandı: {e}")
-            islenen_ts = ts    # bozuk satırda takılıp kalma
-
-    if yeni:
-        alanlar = list(yeni[0].keys())
-        if os.path.exists(HEDEF):
-            with open(HEDEF, encoding='utf-8') as f:
-                mevcut = next(csv.reader(f), [])
-            if mevcut and mevcut != alanlar:
-                # Kaynak şeması değişmiş (yeni feature kolonu): hedef dosyayı birleşik
-                # kolon setine taşı, eski satırlar yeni kolonlarda boş kalır
-                with open(HEDEF, encoding='utf-8') as f:
-                    eski = list(csv.DictReader(f))
-                alanlar = list(dict.fromkeys(mevcut + alanlar))
-                with open(HEDEF, 'w', encoding='utf-8', newline='') as f:
-                    w = csv.DictWriter(f, fieldnames=alanlar, extrasaction='ignore')
-                    w.writeheader()
-                    w.writerows(eski)
-                print(f"🧬 Etiketli CSV şeması güncellendi ({len(mevcut)}→{len(alanlar)} kolon).")
-        yaz_baslik = not os.path.exists(HEDEF)
-        with open(HEDEF, 'a', encoding='utf-8', newline='') as f:
-            w = csv.DictWriter(f, fieldnames=alanlar, extrasaction='ignore')
-            if yaz_baslik:
-                w.writeheader()
-            w.writerows(yeni)
-
-    if islenen_ts > son_ts:
-        with open(DURUM_DOSYASI, 'w') as f:
-            f.write(str(islenen_ts))
-
-    print(f"✅ {len(yeni)} shadow sinyali etiketlendi (toplam kaynak: {len(satirlar)}).")
+    adaylar = shadow_adaylari(os.path.join(BASE_DIR, SHADOW_KAYNAK)) + core_pozisyonlari(core_yollari)
+    hazir = sorted((x for x in adaylar if x['Anahtar'] not in etiketli and x['Ts'] <= simdi_ms - BEKLEME_DK * 60_000),
+                   key=lambda x: x['Ts'])
+    if a.limit:
+        hazir = hazir[:a.limit]
+    sayac = etiketle(ex, hazir, simdi_ms, hedef)
+    print(f"✅ Etiketlendi: shadow={sayac['shadow']} core={sayac['core']} | veri yok={sayac['veri_yok']} | "
+          f"bekliyor={sayac['bekliyor']} | hata={sayac['hata']} (aday: {len(hazir)}, toplam kaynak: {len(adaylar)})")
+    ozet(hedef)
 
 
 if __name__ == "__main__":
