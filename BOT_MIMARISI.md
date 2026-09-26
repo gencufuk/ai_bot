@@ -24,15 +24,15 @@ doğrulanmadığı için bot GÖLGE MODDA çalışır (aşağıda).
 | `shadow_labeler.py` | V2: her gece 02:45 (cron) core + shadow sinyallerini **tek tip etiketle** etiketler → `etiketli_sinyaller.csv` |
 | `backfill_sinyaller.py` | Elle/aylık: geçmiş OHLCV'den sinyal üretir + aynı etiketle etiketler → `backfill_sinyaller.csv` |
 | `sniper/` | Ortak modüller: `csv_kayit` (güvenli CSV), `risk_motoru` (çıkış kararları), `ozellikler` (kural + feature), `etiketleme`, `etiket_deposu`, `model_karti` |
-| `tools/csv_onar.py` | Kolon kayması yaşamış CSV yedeklerini onarır |
+| `tools/` | `temiz_kurulum.py` (arşivle-kur), `kurulum_kontrol.py` (ön kontrol), `csv_onar.py` (kolon kayması onarımı), `gecmis_simulasyon.py` / `v184_simulasyon.py` (geçmiş simülasyonları) |
 | `core_islem_verileri.csv` | V1 işlem kaydı (13 kolon, eski format — uyumluluk için yazılmaya devam ediyor) |
 | `core_islem_verileri_v2.csv` | V2 işlem kaydı (başlıklı, 25 kolon: V1 + genişletilmiş feature'lar + AI skorları) |
 | `shadow_sinyaller.csv` | Kural filtresini geçip **girilmeyen** sinyaller (sebep: AI_RED / TEK_ALIM_KURALI / BAKIYE_YETERSIZ / REJIM_YATAY) |
-| `shadow_sinyaller_etiketli.csv` | Labeler çıktısı: shadow sinyaller + sanal sonuç |
+| `shadow_sinyaller_etiketli.csv` | ESKİ (V1) labeler çıktısı; V18.4'te kullanılmaz, temiz kurulumda arşive kalır |
 | `core_xgboost_model.json` (+ `.kart.json`) | Karar modeli. Feature listesi modelin `feature_names`'inden, eşik/metrikler karttan okunur; bot 5 dk'da bir değişikliği kontrol edip yeniden yükler |
-| `filter_model.json` | Eski (doğrulanmamış) filtre modeli; V3 trainer yeni model yayına alınca `.emekli_<ts>` olarak kenara alır |
+| `filter_model.json` | Eski filtre modeli (Ağustos verisini ezberlemiş); temiz kurulumda arşive kalır, V3 trainer da yeni model yayınlayınca `.emekli_<ts>` olarak kenara alır |
 | `etiketli_sinyaller.csv` / `backfill_sinyaller.csv` | Birleşik etiketli sinyal tablosu (Kaynak: core/shadow/backfill), trainer'ın tek girdisi |
-| `ufuk_islem_verileri.csv` | İkinci botun verisi — trainer havuzuna girer (⚠️ o bot eski kodla çalışıyorsa komisyonsuz kâr yazar) |
+| `ufuk_islem_verileri.csv` | İkinci botun verisi. V18.4 trainer'ı kullanmaz (tek tip etiketli veriyle eğitir); temiz kurulum bu dosyaya dokunmaz |
 
 CSV/state dosyalarını ELLE OLUŞTURMAYIN — kod ilk ihtiyaçta başlığıyla oluşturur.
 V18.4 CSV katmanı mevcut veriyi asla silmez: şema değişince yeni kolonlar sona eklenir; başlıksız

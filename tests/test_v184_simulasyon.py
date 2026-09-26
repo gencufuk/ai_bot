@@ -499,3 +499,121 @@ def test_30_gunluk_pencereler_bitis_gununde_biter():
     r = vs.butce_ozeti(islemler, 1000, 'sabit', 0.2, T0, T0 + 40 * 86_400_000)
     assert r['p30_p10'] == pytest.approx(30.0) and r['p30_medyan'] == pytest.approx(30.0)    # her gün +1 USDT
     assert r['islem'] == 41 and r['toplam_kar'] == pytest.approx(41.0)
+
+
+# --- V18.0.2 (Ağustos botu) sadakati ---------------------------------------------------------
+def v1802_karar(a, tick, m_k, half_sold, gecen_saat, atr_pct, is_w, rsi_83):
+    """Kullanıcının Ağustos commit'indeki ai_bot.py (CORE V18.0.2) vip_cuzdan_loop karar mantığı, emirler
+    yerine eylem adı döndürecek şekilde satır satır aktarıldı. rsi_83: RSI kontrolü yapılsaydı >= 83 çıkar mıydı."""
+    FEE_RATE, ZARAR_ORANI_BALINA, MAX_BEKLEME_SAATI, MIN_BEKLENTI_ORANI = 0.001, 0.020, 4.0, 0.005
+    oran = ((tick * (1 - FEE_RATE)) - (a * (1 + FEE_RATE))) / (a * (1 + FEE_RATE))
+    if oran > m_k:
+        m_k = oran
+    dinamik_stop = max(0.025, min(0.055, (atr_pct * 1.5) / 100))
+    aktif_zarar_orani = ZARAR_ORANI_BALINA if is_w else dinamik_stop
+    if m_k >= 0.025:
+        base_stop = 0.002
+    else:
+        base_stop = -aktif_zarar_orani
+    rsi_vurkac_tetiklendi = False
+    if oran >= 0.05 and not half_sold:          # (+ 60 sn aralık: testte her çağrı yeni kontrol)
+        rsi_vurkac_tetiklendi = rsi_83
+    if rsi_vurkac_tetiklendi and not half_sold:
+        return 'MOON'
+    if m_k >= 0.20:
+        kismi, cikis = m_k - 0.05, max(base_stop, m_k - 0.10)
+    elif m_k >= 0.10:
+        kismi, cikis = m_k - 0.02, max(base_stop, m_k - 0.05)
+    elif m_k >= 0.04:
+        kismi, cikis = m_k - 0.015, max(base_stop, m_k - 0.03)
+    else:
+        kismi, cikis = 999.0, (0.005 if half_sold else base_stop)
+    if m_k >= 0.04 and oran <= kismi and not half_sold and not rsi_vurkac_tetiklendi:
+        return 'KISMI'
+    if oran <= cikis:
+        if m_k >= 0.04:
+            return 'TREND'
+        elif half_sold:
+            return 'GUVENLI'
+        elif m_k >= 0.025:
+            return 'BASA_BAS'
+        return f"STOP {aktif_zarar_orani * 100:.1f}"
+    elif gecen_saat >= MAX_BEKLEME_SAATI and not half_sold:
+        return 'ZAMAN' if oran < MIN_BEKLENTI_ORANI else 'UZAT'
+    return None
+
+
+def motor_karari(a, tick, m_k, half_sold, gecen_saat, atr_pct, is_w, rsi_83, ayar):
+    simdi = 1_800_000_000.0
+    p = risk.Pozisyon(sembol='X', giris=a, max_kar=m_k, half_sold=half_sold, giris_zamani=simdi - gecen_saat * 3600,
+                      atr_pct=atr_pct, is_whale=is_w)
+    sev = risk.seviyeleri_hesapla(p, tick, ayar)
+    rsi_tetik = rsi_83 if risk.rsi_kontrolu_gerekli(p, sev, simdi, ayar) else False
+    for e in risk.kararlar(p, sev, simdi, 'TREND', ayar, rsi_tetik):
+        if e.tip == risk.MOON_BAG:
+            return 'MOON'
+        if e.tip == risk.KISMI_KAR:
+            return 'KISMI'
+        if e.tip == risk.ZAMAN_UZAT:
+            return 'UZAT'
+        if e.tip == risk.TAM_CIKIS:
+            return {risk.MSG_TREND: 'TREND', risk.MSG_GUVENLI: 'GUVENLI', risk.MSG_KILIT: 'BASA_BAS',
+                    risk.MSG_ZAMAN: 'ZAMAN'}.get(e.mesaj) or 'STOP ' + e.mesaj.split('%-')[1].rstrip(')')
+    return None
+
+
+def test_eski_ayarlar_v1802_ile_ayni_karari_verir():
+    rng = np.random.default_rng(42)
+    farkli = []
+    for _ in range(20_000):
+        a = 1.0
+        tick = float(rng.uniform(0.92, 1.35))
+        m_k = float(rng.choice([0.0, rng.uniform(0, 0.03), rng.uniform(0.02, 0.06), rng.uniform(0.03, 0.35)]))
+        args = (a, tick, m_k, bool(rng.random() < 0.3), float(rng.uniform(0, 8)), float(rng.uniform(0.1, 4.5)),
+                bool(rng.random() < 0.2), bool(rng.random() < 0.3))
+        beklenen, bulunan = v1802_karar(*args), motor_karari(*args, vs.RISK_ESKI)
+        if beklenen != bulunan:
+            farkli.append((args, beklenen, bulunan))
+    assert not farkli, farkli[:5]
+    # V18.4 ayarları V18.0.2'den gerçekten farklı karar verir (testin ayırt edici olduğunu gösterir)
+    fark_v184 = sum(v1802_karar(*x) != motor_karari(*x, vs.RISK_V184) for x in [
+        (1.0, 1.017, 0.035, False, 1.0, 1.0, False, False),     # m_k %3.5, net %1.5: V18.4'te (ATR 1 -> eşik %3) kısmi kâr
+        (1.0, 1.012, 0.028, False, 1.0, 1.0, False, False)])    # kilit: V18.0.2 +%0.2'de tutar, V18.4 +%1'de satar
+    assert fark_v184 == 2
+
+
+def test_v1802_senaryosu_agustos_giris_filtrelerini_uygular():
+    ortak = {'veri': 'VAR', 'kasa_tipi': 'NORMAL', 'giris_fiyat': 100.0, 'giris_dogrulandi': True, 'btc_ok': True,
+             'rejim': 'TREND', '_gercek_bacaklar': [(T0 + 60_000, 1.0, 0.01, 'X')],
+             '_ESKI_SIM_bacaklar': [(T0 + 60_000, 1.0, 101.0, 'X')], '_V184_bacaklar': [(T0 + 60_000, 1.0, 101.0, 'X')]}
+    tablo = pd.DataFrame([
+        {**ortak, 'sembol': 'A', 'giris_ms': T0, 'btc_ok_eski': True, 'atr_pct': 3.5, 'ai_skor': 0.9},   # ATR<=4 geçer
+        {**ortak, 'sembol': 'B', 'giris_ms': T0, 'btc_ok_eski': True, 'atr_pct': 4.2, 'ai_skor': 0.9},
+        {**ortak, 'sembol': 'C', 'giris_ms': T0, 'btc_ok_eski': False, 'atr_pct': 2.0, 'ai_skor': 0.9},
+        {**ortak, 'sembol': 'D', 'giris_ms': T0, 'btc_ok_eski': True, 'atr_pct': 2.0, 'ai_skor': 0.3},
+    ])
+
+    class Eski:
+        kart, esik = None, 0.65
+
+        def blokla_mi(self, s):
+            return s < self.esik
+
+    class Yeni(Eski):
+        kart = {'surum': 'v3'}
+    assert [x['sembol'] for x in vs.gercek_senaryolari(tablo, Eski())['V1802']] == ['A']
+    assert [x['sembol'] for x in vs.gercek_senaryolari(tablo, None)['V1802']] == ['A', 'D']
+    # yeni (kartlı) model Ağustos botunda yoktu: V1802'ye uygulanmaz
+    assert [x['sembol'] for x in vs.gercek_senaryolari(tablo, Yeni())['V1802']] == ['A', 'D']
+
+
+def test_btc_eski_kurali_histerezissiz_ve_cokus_korumali():
+    n = 700
+    c = np.r_[np.linspace(100, 90, 350), np.linspace(90, 110, 340), [110, 108.0, 111, 111, 111, 111, 111, 111, 111, 111]]
+    df = pd.DataFrame({'ts': T0 + np.arange(n) * 900_000, 'o': c, 'h': c * 1.001, 'l': c * 0.999, 'c': c, 'v': 1.0})
+    b = vs.BtcBaglami(df)
+    kap = lambda i: T0 + i * 900_000 + 900_000  # noqa: E731
+    assert b.eski_ok(kap(340)) is False                     # düşüş sürerken EMA200 altında
+    assert b.eski_ok(kap(685)) is True                      # EMA200 üstünde
+    assert b.eski_ok(kap(691)) is False                     # 110 -> 108: %1.8 ani düşüş
+    assert b.eski_ok(kap(699)) is True

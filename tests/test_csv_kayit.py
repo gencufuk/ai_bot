@@ -145,7 +145,7 @@ def test_baslik_gibi():
 
 
 def test_onarim_araci_gercek_v2_yedegini_onarir(tmp_path):
-    kaynak = os.path.join(REPO, 'core_islem_verileri_v2.csv.yedek')
+    kaynak = os.path.join(REPO, 'veri', 'sunucu_2026-09-26', 'core_islem_verileri_v2.csv.yedek')
     if not os.path.exists(kaynak):
         pytest.skip('yedek dosyası yok')
     hedef = tmp_path / 'v2.yedek'

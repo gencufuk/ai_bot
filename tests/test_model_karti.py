@@ -65,11 +65,11 @@ def test_dosya_silinince_model_devre_disi(tmp_path):
 def test_legacy_modeller_canli_kayitli_skorlari_birebir_uretir(tmp_path):
     """16-20 Eylül'de canlıda CSV'ye yazılmış AI_Skor / Filtre_Skor değerleri,
     yeni skorlama yolu (feature_names + kanonik satır) ile birebir yeniden üretilmeli."""
-    yedek = os.path.join(REPO, 'core_islem_verileri_v2.csv.yedek')
+    yedek = os.path.join(REPO, 'veri', 'sunucu_2026-09-26', 'core_islem_verileri_v2.csv.yedek')
     if not os.path.exists(yedek):
         pytest.skip('veri yok')
     for ad in ('core_xgboost_model.json', 'filter_model.json'):
-        shutil.copy(os.path.join(REPO, ad), tmp_path / ad)
+        shutil.copy(os.path.join(REPO, 'veri', 'sunucu_2026-09-26', ad), tmp_path / ad)
     core = ModelYuvasi(str(tmp_path / 'core_xgboost_model.json'), 'core', 0.65, 'min')
     filtre = ModelYuvasi(str(tmp_path / 'filter_model.json'), 'filtre', 0.45, 'max')
     assert 'legacy' in core.yenile() and 'legacy' in filtre.yenile()

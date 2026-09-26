@@ -1,7 +1,7 @@
 # AI Ensemble Sniper — V18.3 Analizi ve V18.4 Çözümleri
 
 > Tarih: 2026-09-26 · Kapsam: `main` dalındaki 17 dosya (kod, modeller, CSV'ler, loglar).
-> Bu dokümandaki her sayı repodaki veriden hesaplandı; hesaplama yöntemi ilgili bölümde yazılı.
+> Bu dokümandaki her sayı repodaki veriden hesaplandı (`veri/`: sunucu kopyası `veri/sunucu_2026-09-26/`, kurtarılmış geçmiş, Ağustos botunun kodu `veri/eski_surum/`); hesaplama yöntemi ilgili bölümde yazılı.
 > Kod değişiklikleri `claude/ai-ensemble-sniper-optimization-zmtv9p` dalında; 80 otomatik test
 > (pandas 2.3 ve 3.0'da), kritik düzeltmeler mutasyon testiyle doğrulandı, diff bağımsız bir review'dan geçti (§9).
 
@@ -57,7 +57,7 @@ Temiz tarihçe `core_islem_verileri_v2_gecmis.onarildi.csv` olarak pakette; labe
 Ayrıca **31 Mayıs – 5 Ağustos arası tüm işlemler komisyonsuz kaydedilmiş** (276 satır). O dönemin kayıtlı kârı gerçekte olduğundan iyi görünür; §10'daki hesaplar fiyatlardan komisyon dahil yeniden yapıldı.
 
 ### 1.4 Diğer veri sorunları
-- Yüklenen `core_islem_verileri_v2.csv`, `core_xgboost_model.json` ile **bayt bayt aynı** (md5 `9f70006a…`). Muhtemelen yükleme hatası; gerçek V2 dosyası elimde değil.
+- Yüklenen `core_islem_verileri_v2.csv`, `core_xgboost_model.json` ile **bayt bayt aynı** (md5 `9f70006a…`). Muhtemelen yükleme hatası; gerçek V2 dosyası elimde değil. Yinelenen kopya repodan kaldırıldı; temiz kurulum aracı JSON içeren bir CSV'yi geri getirmez.
 - `core_islem_verileri_v2.csv.yedek`: 25 kolonluk başlık altında 50 satır 27 alanlı (Sym_ADX/BTC_ADX başlık güncellenmeden AI_Skor'dan önce eklenmiş). **Deterministik olarak onarılabilir**: her şema sürümünün alan sayısı farklı. `tools/csv_onar.py` 52/52 satırı onarıyor (test: 16 Eylül satırlarında ADX boş, skorlar kaymamış).
 - Shadow tarafı zaten onarılmış (yedeklerdeki 38/38 ve 30/30 satır güncel dosyalarda).
 
@@ -223,27 +223,14 @@ Yeni pip bağımlılığı yok (xgboost, pandas, pandas_ta, ccxt, redis, aiohttp
 
 ## 7. Deploy adımları
 
-```bash
-# Ayrıntılı, sürükle-bırak adımları: KURULUM.md (paket: ai_bot_v18_4_paket.zip)
-# 0) Botu durdur + yedek
-cd /root && tar czf /root/yedek_$(date +%F).tgz --exclude=./venv .
+Önerilen yol **temiz başlangıç**: `KURULUM.md` → `tools/temiz_kurulum.py`. Araç önce kuru çalışır, planı gösterir. Sonra hiçbir şeyi silmeden eski bot dosyalarını `/root/eski_bot_<tarih>/` klasörüne taşır, V18.4'ü kurar ve canlı verileri geri kopyalar: işlem CSV'leri, shadow sinyalleri, core model.
+- Getirilmeyenler: filtre modeli, eski loglar ve yedekler.
+- Dokunulmayanlar: `.env`, `venv/`, Redis dosyaları, crontab'da geçen dosyalar ve başka bota ait veriler.
+- Geri alma: tek komut (`--geri-al`).
 
-# 1) Paketin İÇİNDEKİLERİ /root'a kopyala (repo'nun tamamını DEĞİL: repodaki CSV/JSON'lar eski yükleme)
-# 2) Kontrol: /root/venv/bin/python tools/kurulum_kontrol.py   (❌ varsa başlatma)
+Cron: 02:45 labeler, 03:00 trainer. Trainer bir modeli yayına alırsa bot 5 dk içinde otomatik yükler ve Telegram'dan bildirir.
 
-# 3) AI: mv filter_model.json filter_model.json.emekli   (§2.3)
-#    Elle tuttuğun coin varsa .env: MANUEL_COINLER=ETH,SOL
-
-# 4) Botu başlat (systemd önerilir: Restart=always)
-
-# 6) Etiketle + backfill + kuru eğitim
-python shadow_labeler.py
-python backfill_sinyaller.py --gun 180 --evren 80      # uzun sürer, kesilirse kaldığı yerden devam eder
-python ai_trainer.py --kuru && cat egitim_raporu.json
-```
-Cron değişmez (02:45 labeler, 03:00 trainer). Trainer bir modeli yayına alırsa bot 5 dk içinde otomatik yükler ve Telegram'dan bildirir.
-
-**Yeni modele güven kriteri:** trainer `karar: yayinda` üretmeli ve `egitim_raporu.json` → `canli_oos_auc` ile `esik.canli_engelleme_havuz_esigiyle` makul olmalı. Kart eşiği sinyallerin ~%30'unu engelleyecek şekilde seçilir; canlı engelleme oranı bundan çok saparsa bot Telegram'dan uyarır (dağılım kayması).
+**Yeni modele güven kriteri:** trainer `karar: yayinda` üretmeli; `egitim_raporu.json` içindeki `canli_oos_auc` ve `esik.canli_engelleme_havuz_esigiyle` makul olmalı. Kart eşiği sinyallerin ~%30'unu engelleyecek şekilde seçilir. Canlı engelleme oranı bundan çok saparsa bot Telegram'dan uyarır (dağılım kayması).
 
 ## 8. Sonraki adımlar (öncelik sırasıyla)
 1. `SINYAL_KAPALI_MUM = True` denemesi (repaint + train/serve paritesi).
@@ -310,14 +297,14 @@ Review ayrıca şunları doğruladı: `risk_motoru` ile V18.3 arasında belgelen
 - **Sınırlar:** işlemler bot sürüm sürüm değişirken yapıldı (V16 → V18.3). Rejim filtresi (17 Eylül'den beri) ve AI bloklamasının geçmiş etkisi bu veriyle ölçülemez; eski modeller bu verinin üzerinde eğitildiği için onları geçmişe uygulamak iyimser olur. V18.4 mantığının geçmiş fiyat verisiyle backtest'i için backfill sinyalleri + `sniper/risk_motoru` kullanılarak sunucuda bir backtest yazılabilir. Geçmiş performans geleceği garanti etmez.
 
 ### 10.1 5 / 7 Ağustos başlangıçlı yeniden oynatma
-**Bu sonuçlar V18.3 ya da V18.4'ün değil, o tarihlerde çalışan sürümün gerçekleşen sonucudur.** CSV'deki çıkış tipleri sürüm sınırlarını gösteriyor: "🛡️ BAŞA BAŞ KORUMASI" (kâr kilidi +%0.2) son kez 20 Eylül'de, V18.3'ün "🔒 KÂR KİLİDİ (+%1)" ve "💤 MOMENTUM ÖLDÜ" çıkışları ilk kez 21–22 Eylül'de görülüyor.
+**Bu sonuçlar V18.3 ya da V18.4'ün değil, o tarihlerde çalışan sürümün gerçekleşen sonucudur.** 5 Ağustos – 6 Eylül arası işlemler kullanıcının Ağustos commit'indeki **V18.0.2** ile yapıldı (`veri/eski_surum/`). Gerekçe: CSV kayıtları bu kodun çıkış mantığıyla birebir uyuşuyor; kısmi kâr satışlarının neredeyse hepsi net +%2.5 üstünde, bu sabit %4 kademeyle tutarlı. Tek fark: 3 Ağustos'tan itibaren `Kar_Orani` komisyon dahil yazılıyor, `Net_Kar_USDT` ise brüt kalmış. CSV'deki çıkış tipleri sürüm sınırlarını gösteriyor: "🛡️ BAŞA BAŞ KORUMASI" (kâr kilidi +%0.2) son kez 20 Eylül'de, V18.3'ün "🔒 KÂR KİLİDİ (+%1)" ve "💤 MOMENTUM ÖLDÜ" çıkışları ilk kez 21–22 Eylül'de görülüyor.
 
 | Dönem | Çalışan mantık | Pozisyon | İşlem günü | Ort. net | Kazanma | 20 USDT ile toplam |
 |---|---|---|---|---|---|---|
-| 5–15 Ağu | Ağustos sürümü (kilit +%0.2, ATR<%4, rejim filtresi yok) | 47 | 9 | +%0.70 | %49 | +6.60 |
+| 5–15 Ağu | **V18.0.2** (kullanıcının Ağustos commit'i): ilk kâr kademesi sabit %4, kilit +%0.2, ATR<%4, rejim filtresi yok, core AI ≥ 0.65 zorunlu | 47 | 9 | +%0.70 | %49 | +6.60 |
 | 16–31 Ağu | aynı | 145 | 15 | +%0.53 | %51 | +15.27 |
 | 1–15 Eyl (7–15 Eylül'de işlem yok) | aynı | 47 | 5 | +%1.11 | %64 | +10.41 |
-| 16–20 Eyl | yeni CSV şeması, çıkışlar hâlâ eski | 40 | 5 | −%0.24 | %50 | −1.89 |
+| 16–20 Eyl | V18.x: yeni CSV, 17 Eylül'den rejim filtresi, ATR'ye bağlı ilk kademe (%3–6), AI gölge mod; kilit hâlâ +%0.2 | 40 | 5 | −%0.24 | %50 | −1.89 |
 | 21–25 Eyl | V18.3 (kilit +%1, momentum çıkışı, ATR<%3) | 33 | 4 | −%0.47 | %39 | −3.12 |
 
 **Bütçe kısıtlı sonuç** (sabit kasa 20/40 USDT; oransal = işlem başına özsermayenin %20'si):
@@ -343,7 +330,12 @@ Review ayrıca şunları doğruladı: `risk_motoru` ile V18.3 arasında belgelen
 | Filtre modeli (skor > 0.45) | 39 engellenirdi (−%1.83) — **ezber, geçersiz** | 17 engellenirdi (−%0.37), geçen −%0.33: fark yok |
 
 - **ATR<%3 filtresi** 5 Ağu → 4 Eyl penceresinde 100 USDT sabit kârı +26.6'dan **+17.9 USDT**'ye, oransal 450 USDT kârı +121.7'den **+74.7 USDT**'ye düşürürdü. Yüksek ATR'li 30 girişin ortalaması (+%0.96) diğerlerinden (+%0.38) iyi; fark anlamlı değil (permütasyon p=0.39). V18.3'teki bu değişiklik 18–20 Eylül'deki üç −%5 stoptan sonra yapılmıştı; daha uzun geçmiş onu desteklemiyor. Karar sizin: ATR'yi %4'e geri almak (`MAX_ATR_PCT = 0.04`) daha fazla ve daha oynak işlem demek.
-- **Core model:** Ağustos girişlerinin hiçbirini engellemezdi, yani Ağustos sonucuna etkisi yok. 16–25 Eylül içinde (zaman karışıklığı olmadan) engellediği işlemler daha kötü: tek yönlü permütasyon p=0.05, RSI dilimleri içinde p=0.12. Model büyük ölçüde "düşük RSI + düşük hacim oranı" girişlerini eliyor. Adli bulgu: modelin `base_score=0.45588` = 31/68 ve bu oranı veren tek kronolojik önek ilk 68 satır; model o dönemde AUC **0.99** ile ezber yaparken sonraki her dönemde AUC ≈ 0.5 (16 Haz–31 Tem 0.54, Ağustos 0.50, 1–15 Eyl 0.48, 16–25 Eyl 0.55). Yani **ilk 68 işlemle (31 Mayıs – 15 Haziran) eğitilmiş**; Ağustos ve Eylül onun için gerçekten örneklem dışı. Kanıt zayıf ama tutarlı; §2.3'teki öneri (bloklama açık, filtre modeli kaldırılsın) değişmiyor.
+- **Core model:** Ağustos girişlerinin hiçbirini engellemezdi, çünkü Ağustos botu (V18.0.2) **aynı modelle aynı eşikte zaten bloklama yapıyordu**. V18.0.2 kodu `AI_MIN_OLASILIK = 0.65` altındaki sinyali açmıyor. Bu yüzden Ağustos işlemlerinin hepsi eşiğin üstünde; seçilim etkisi var, bu "modelin Ağustos'ta işe yaramadığı" anlamına gelmiyor. 16 Haziran – 4 Ağustos işlemlerinin %8'i, 16–25 Eylül'ün %66'sı eşiğin altında. 16–25 Eylül'de V18.x gölge modda olduğu için filtre kapalıydı. V18.4'ün mevcut ayarı (`AI_GOLGE_MOD = False`) Ağustos davranışını geri getirir. 16–25 Eylül içinde (zaman karışıklığı olmadan) engellediği işlemler daha kötü: tek yönlü permütasyon p=0.05, RSI dilimleri içinde p=0.12. Model büyük ölçüde "düşük RSI + düşük hacim oranı" girişlerini eliyor. Adli bulgu: modelin `base_score=0.45588` = 31/68 ve bu oranı veren tek kronolojik önek ilk 68 satır; model o dönemde AUC **0.99** ile ezber yaparken sonraki her dönemde AUC ≈ 0.5 (16 Haz–31 Tem 0.54, Ağustos 0.50, 1–15 Eyl 0.48, 16–25 Eyl 0.55). Yani **ilk 68 işlemle (31 Mayıs – 15 Haziran) eğitilmiş**; Ağustos ve Eylül onun için gerçekten örneklem dışı. Kanıt zayıf ama tutarlı; §2.3'teki öneri (bloklama açık, filtre modeli kaldırılsın) değişmiyor.
+- **Gece eğitimi zaman çizelgesi** (`ai_trainer_history.log`):
+  - 6 Eylül 14:55 – 16 Eylül: eski trainer her gece filtre modelini tüm geçmişle yeniden eğitti ("191→196 zararlı işlem ezberlendi").
+  - 17–20 Eylül: V2 trainer hiçbir modeli kaydetmedi (AUC < 0.55).
+  - 21 Eylül'den itibaren: veri kaybı yüzünden "yetersiz veri".
+  - 7–15 Eylül'de hiç işlem yok. Nedeni ezberleyen filtre mi, piyasa mı (BTC'nin EMA200 altında kalması) bu veriden ayrıştırılamıyor; simülasyonun backfill senaryosu o günlerdeki sinyalleri gösterir.
 - **Filtre modelinin** Ağustos'taki etkileyici ayrımı ezberdir: 15–16 Eylül'de Ağustos'u da içeren 603 satırla eğitildi (`base_score` = 196/603). Eğitim dönemindeki AUC'si 0.75–0.91, eğitimden sonraki 16–25 Eylül'de 0.50. Simülasyonlarda kullanılmadı.
 - **Ölçülemeyenler:** rejim filtresi (BTC 15m ADX<20 iken giriş yok), BTC EMA200 histerezisi ve V18.4 çıkış mantığı (kâr kilidi +%1, momentum çıkışı, yarım satış sonrası taban düzeltmesi). Bunlar için fiyat verisi gerekiyor: §10.3.
 
@@ -353,7 +345,8 @@ Binance'ten 1 dakikalık fiyat geçmişini indirir ve V18.4'ün kararlarını ca
 | Senaryo | Ne |
 |---|---|
 | `GERCEK` | o günkü sürümün gerçekleşen sonucu |
-| `ESKI_SIM` | aynı girişler, Ağustos sürümünün çıkış ayarlarıyla simülasyon. `GERCEK` ile farkı **simülatörün hata payıdır** |
+| `ESKI_SIM` | aynı girişler, Ağustos botunun (**V18.0.2**) çıkış mantığıyla simülasyon: sabit %4 ilk kademe, +%0.2 kilit, momentum çıkışı yok, 25 mumluk RSI. 16 Eylül öncesinde `GERCEK` ile farkı **simülatörün hata payıdır** |
+| `V1802` | Ağustos botu çalışmaya devam etseydi: V18.0.2 çıkışları + V18.0.2 giriş filtreleri (ATR ≤ %4, BTC > EMA200 histerezissiz, core AI ≥ 0.65) |
 | `V184_CIKIS` | aynı girişler, V18.4 çıkış mantığı |
 | `V184` | + V18.4 giriş filtreleri: BTC onayı, TREND rejimi, ATR ≤ %3 |
 | `V184_AI` | + core model vetosu |
@@ -363,7 +356,9 @@ Her senaryo 100/450 USDT ve sabit/oransal kasa için botun kurallarıyla oynatı
 
 **Modelleme:** 1m mum yeşilse açılış→dip→tepe→kapanış, kırmızıysa açılış→tepe→dip→kapanış yolu izlenir. Stop, kısmi kâr ve trailing eşikleri tam kesişim fiyatında tetiklenir; dolum bunun %0.15 altından (`--kayma-seviye`, gerçek stoplarda ölçülen ortalama taşma ~%0.17). Zaman aşımı, momentum ve RSI çıkışları o anki fiyattan %0.05 kaymayla. Eski sürüm 4 saatlik süre uzatmasında giriş zamanını sıfırladığı için gerçek giriş anı, dolum fiyatının 1m mum aralığına düştüğü an aranarak bulunur. Yarım satıştan sonra canlıdaki gibi 2 sn sonra aynı fiyattan yeniden değerlendirilir (kalan yarı eşiğin altındaysa hemen satılır). Giriş zamanı doğrulanamayan pozisyonlar hiçbir senaryoya alınmaz (tüm senaryolar aynı küme). AI senaryosu yalnız modelin eğitim verisinden sonra açılan girişlere uygulanır (kartlı modelde dönem karttan okunur) ve modelin feature'ları o kaynakta üretilemiyorsa (ör. Ağustos kayıtlarında V2 feature'ları yok) atlanır.
 
-Testler (`tests/test_v184_simulasyon.py`, 27 test): her çıkış tipi için elle kurulmuş senaryolar, 80 rastgele fiyat yolunda motorun 200 kat yoğun yolla aynı kararı verdiği diferansiyel test, RSI önbelleğinin sonucu değiştirmediği test, bütçe kuralları, önbellek, AI kısıtları ve sahte borsayla uçtan uca çalıştırma; pandas 2.3 ve 3.0'da geçiyor.
+**V18.0.2 sadakati:** kullanıcının Ağustos commit'indeki karar kodu teste satır satır aktarıldı. `ESKI_SIM` ayarlarıyla çalışan motor 20.000 rastgele durumun hepsinde aynı kararı veriyor (`test_eski_ayarlar_v1802_ile_ayni_karari_verir`).
+
+Testler (`tests/test_v184_simulasyon.py`, 30 test): her çıkış tipi için elle kurulmuş senaryolar, 80 rastgele fiyat yolunda motorun 200 kat yoğun yolla aynı kararı verdiği diferansiyel test, RSI önbelleğinin sonucu değiştirmediği test, bütçe kuralları, önbellek, AI kısıtları ve sahte borsayla uçtan uca çalıştırma; pandas 2.3 ve 3.0'da geçiyor.
 
 **Bağımsız inceleme:** engelleyici hata bulunmadı. Motor, aynı fiyat yolunda 2 saniyelik canlı tarama temposunu taklit eden bir referansla (RSI moon bag, yatay rejim momentumu ve 4 saat zaman aşımı açık) karşılaştırıldı: işlem başına ortalama fark +%0.01–0.03, 1000 yolda çıkış tipleri ~%100 aynı. Eski sürümün süre uzatmalı geçmişi sahte olarak üretilip araca verildiğinde 53/53 giriş zamanı bulundu, Ağustos-sim ile "gerçek" arasındaki fark ort. %0.03. İncelemenin bulduğu düzeltilmiş noktalar: saat dilimi tahmini yanlış eşleşme üretebiliyordu (kaldırıldı; `--saat-farki` ile tüm kayıtlara uygulanır), doğrulanamayan girişler senaryolara giriyordu, çıkış etkisinin güven aralığı simülatör hatasını içeriyordu (artık V18.4 − Ağustos-sim eşleştirilmiş farkı), 30 günlük pencereler bitişten sonraki boş günleri sayıyordu, yeni trainer modeli gelince AI senaryosu eksik feature'la skorlanabilirdi, hiç verisi olmayan girdi setinde çöküyordu.
 

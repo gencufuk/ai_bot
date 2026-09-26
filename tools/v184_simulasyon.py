@@ -8,8 +8,11 @@ canlı botun kullandığı kodun AYNISI verir (sniper.risk_motoru).
 Kaynaklar (--kaynak):
   gercek    Botun gerçekten açtığı pozisyonlar; giriş zamanı ve gerçek dolum fiyatı korunur.
               GERCEK      o günkü sürümün gerçekleşen sonucu (fiyatlardan, komisyon dahil)
-              ESKI_SIM    aynı girişler, Ağustos sürümünün çıkış ayarlarıyla SİMÜLE (kâr kilidi +%0.2,
-                          momentum çıkışı yok, 25 mumluk RSI). GERCEK ile farkı = simülatörün hata payı
+              ESKI_SIM    aynı girişler, Ağustos botunun (V18.0.2) çıkış mantığıyla SİMÜLE: ilk kâr kademesi
+                          sabit %4, kâr kilidi +%0.2, momentum çıkışı yok, 25 mumluk RSI. 16 Eylül öncesinde
+                          GERCEK ile farkı = simülatörün hata payı
+              V1802       Ağustos botu çalışmaya devam etseydi: V18.0.2 çıkışları + V18.0.2 giriş filtreleri
+                          (ATR <= %4, BTC > EMA200 histerezissiz + ani çöküş koruması, core AI >= 0.65)
               V184_CIKIS  aynı girişler, V18.4 çıkış motoru
               V184        + V18.4 giriş filtreleri: BTC onayı (EMA200 histerezisi, ani çöküş koruması),
                           TREND rejimi (BTC 15m ADX >= 20), ATR <= %3
@@ -78,21 +81,26 @@ TF_MS = {'1m': DK_MS, '15m': MUM_15M_MS, '1h': SAAT_MS}
 # ai_bot.py V18.4 RISK_AYAR ile aynı (tests/test_v184_simulasyon.py karşılaştırır)
 RISK_V184 = risk.RiskAyarlari(fee_rate=0.001, zarar_orani_balina=0.020, kar_kilidi_oran=0.010,
                               max_bekleme_saati=4.0, min_beklenti_orani=0.005, momentum_olu_saat=1.5)
-# Ağustos sürümü (CSV'deki çıkış tiplerinden): kâr kilidi +%0.2 ("🛡️ BAŞA BAŞ KORUMASI"), momentum çıkışı yok
-RISK_ESKI = replace(RISK_V184, kar_kilidi_oran=0.002, momentum_olu_saat=1e9)
+# Ağustos botu = V18.0.2 (kullanıcının Ağustos commit'i): ilk kâr kademesi ATR'den bağımsız sabit %4
+# ("elif m_k >= 0.04"), kâr kilidi +%0.2 ("🛡️ BAŞA BAŞ KORUMASI"), momentum çıkışı yok, RSI 25 mumla.
+# tests/test_v184_simulasyon.py bu ayarların V18.0.2 koduyla aynı kararı verdiğini doğrular.
+RISK_ESKI = replace(RISK_V184, kar_kilidi_oran=0.002, momentum_olu_saat=1e9, ilk_esik_min=0.04, ilk_esik_max=0.04)
 MAX_ATR_V184 = 3.0            # ai_bot.MAX_ATR_PCT (ATR/fiyat > %3 ise sinyal yok)
+MAX_ATR_V1802 = 4.0           # V18.0.2: (atr_val / price) > 0.04 ise girmez
 COOLDOWN_MS = SAAT_MS         # _pozisyonu_kapat: tam çıkıştan sonra 1 saat
 KARA_LISTE_MS = GUN_MS        # üst üste 2 stop -> 24 saat
 ALIM_KAYMASI = 0.0005         # backfill: sinyal fiyatı -> market alım dolumu (etiketleme ile aynı)
 YOL_OFSET_MS = (0, 20_000, 40_000, 59_000)
 UZATMA_MS = 4 * SAAT_MS
 VARSAYILAN_DESENLER = ['core_islem_verileri.csv', 'core_islem_verileri_v2.csv', '*.onarildi.csv']
-# ESKI_SIM Ağustos sürümünü modeller. V18.3 20-21 Eylül gecesi devreye girdi (CSV: son "BAŞA BAŞ" 20 Eylül,
-# ilk "KÂR KİLİDİ (+%1)" 21 Eylül); doğrulama yalnız bu tarihten önce açılan pozisyonlarla yapılır.
-ESKI_SURUM_BITIS = '2026-09-21'
+# ESKI_SIM V18.0.2'yi modeller: V18.0.2'nin son işlemi 6 Eylül; 16 Eylül'den itibaren V18.x (V2 CSV, 17 Eylül'den
+# rejim filtresi, ATR'ye bağlı ilk kâr kademesi, AI gölge mod), 21 Eylül'den V18.3. Doğrulama yalnız 16 Eylül
+# öncesi açılan pozisyonlarla yapılır.
+ESKI_SURUM_BITIS = '2026-09-16'
 SENARYO_ACIKLAMA = {
     'GERCEK': 'gerçekleşen (o günkü sürüm)',
-    'ESKI_SIM': 'aynı girişler, Ağustos çıkış ayarları (doğrulama)',
+    'ESKI_SIM': 'aynı girişler, V18.0.2 (Ağustos) çıkışları (doğrulama)',
+    'V1802': 'Ağustos botu devam etseydi (V18.0.2 çıkış + giriş filtreleri)',
     'V184_CIKIS': 'aynı girişler, V18.4 çıkışı',
     'V184': 'V18.4 çıkışı + giriş filtreleri',
     'V184_AI': 'V184 + core model vetosu',
@@ -257,6 +265,12 @@ class BtcBaglami:
         self.btc_ok = self.df['btc_ok'].to_numpy(dtype=bool)
         self.rejim = self.df['rejim'].astype(str).to_numpy()
         self.adx = self.df['btc_adx'].to_numpy(dtype=float)
+        # V18.0.2 kuralı: fiyat EMA200 üstünde ve ani çöküş yok (histerezis yok)
+        c, h = btc_df['c'].to_numpy(dtype=float), btc_df['h'].to_numpy(dtype=float)
+        tepe = pd.Series(h).rolling(3, min_periods=1).max().to_numpy()
+        cokus = dict(zip(btc_df['ts'].to_numpy(dtype='int64') + MUM_15M_MS, (tepe - c) / tepe > 0.015))
+        self.btc_ok_eski = ((self.df['btc_ema_uzaklik'].to_numpy(dtype=float) > 0)
+                            & ~np.array([bool(cokus.get(int(k), False)) for k in self.kapanis], dtype=bool))
 
     def _i(self, t_ms):
         return int(np.searchsorted(self.kapanis, t_ms, side='right')) - 1
@@ -266,6 +280,10 @@ class BtcBaglami:
         if i < 0:
             return None
         return bool(self.btc_ok[i]), str(self.rejim[i]), float(self.adx[i])
+
+    def eski_ok(self, t_ms):
+        i = self._i(t_ms)
+        return None if i < 0 else bool(self.btc_ok_eski[i])
 
     def rejim_at(self, t_ms):
         i = self._i(t_ms)
@@ -671,6 +689,7 @@ def gercek_kaynak(depo, btc: BtcBaglami, poz: pd.DataFrame, motorlar: Dict[str, 
             continue
         d = btc.durum(giris_ms)
         k['btc_ok'], k['rejim'], k['btc_adx'] = d if d else (None, None, None)
+        k['btc_ok_eski'] = btc.eski_ok(giris_ms)
         k['ai_skor'] = ai_skoru(yuva, {'Giris_RSI': k['rsi'], 'Giris_Vol_Oran': k['vol_oran'],
                                        'Giris_ATR_Pct': k['atr_pct'], 'Sinyal': r['sinyal']}) if yuva else None
         satirlar.append(k)
@@ -686,10 +705,16 @@ def kullanilabilir(tablo: pd.DataFrame) -> pd.DataFrame:
     return tablo[(tablo['veri'] == 'VAR') & (tablo['giris_dogrulandi'].fillna(False).astype(bool))]
 
 
+def _dogru_mu(x) -> bool:
+    return x is not None and pd.notna(x) and bool(x)
+
+
 def gercek_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, List[dict]]:
     """Karşılaştırılabilirlik için tüm senaryolar AYNI pozisyon kümesinden türetilir. ai_bas_ms: AI modelinin
-    eğitim verisi bitişi; V184_AI yalnız bundan sonra açılanları içerir (örneklem içi skorlama olmasın)."""
-    sen = {ad: [] for ad in ['GERCEK', 'ESKI_SIM', 'V184_CIKIS', 'V184', 'V184_AI']}
+    eğitim verisi bitişi; V184_AI yalnız bundan sonra açılanları içerir (örneklem içi skorlama olmasın).
+    V1802'nin AI filtresi yalnız kartsız (Ağustos'ta kullanılan eski) modelle uygulanır."""
+    sen = {ad: [] for ad in ['GERCEK', 'ESKI_SIM', 'V1802', 'V184_CIKIS', 'V184', 'V184_AI']}
+    eski_ai = yuva if (yuva is not None and not getattr(yuva, 'kart', None)) else None
     if yuva is None:
         sen.pop('V184_AI')
     t = kullanilabilir(tablo)
@@ -703,10 +728,12 @@ def gercek_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, L
                                            for x in b], 'son_mesaj': b[-1][3]}
             if ad == 'ESKI_SIM':
                 sen['ESKI_SIM'].append(islem)
+                if (_dogru_mu(r.get('btc_ok_eski')) and r['atr_pct'] <= MAX_ATR_V1802
+                        and (eski_ai is None or (pd.notna(r['ai_skor']) and not eski_ai.blokla_mi(float(r['ai_skor']))))):
+                    sen['V1802'].append(islem)
                 continue
             sen['V184_CIKIS'].append(islem)
-            btc_ok = r['btc_ok'] is not None and pd.notna(r['btc_ok']) and bool(r['btc_ok'])
-            if btc_ok and r['rejim'] == 'TREND' and r['atr_pct'] <= MAX_ATR_V184:
+            if _dogru_mu(r['btc_ok']) and r['rejim'] == 'TREND' and r['atr_pct'] <= MAX_ATR_V184:
                 sen['V184'].append(islem)
                 if (yuva is not None and pd.notna(r['ai_skor']) and not yuva.blokla_mi(float(r['ai_skor']))
                         and (ai_bas_ms is None or r['giris_ms'] > ai_bas_ms)):
@@ -886,8 +913,8 @@ def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu) -> str:
                   f"doğrulanamayan (senaryolara alınmadı): {g['dogrulanamayan']}"]
     if dogrulama:
         d = dogrulama
-        y += ['', f"1) SİMÜLATÖR DOĞRULAMASI — {ESKI_SURUM_BITIS} öncesi (Ağustos sürümü) girişler: aynı ayarlarla "
-                  f"simülasyon vs gerçekleşen",
+        y += ['', f"1) SİMÜLATÖR DOĞRULAMASI — {ESKI_SURUM_BITIS} öncesi girişler (V18.0.2 dönemi): V18.0.2 çıkış "
+                  f"mantığıyla simülasyon vs gerçekleşen",
               f"   n={d['n']} | ort. net getiri: gerçek {_pct(d['gercek_ort'])}, simülasyon {_pct(d['sim_ort'])} | "
               f"pozisyon başına ort. mutlak fark {_pct(d['mutlak_fark_ort'])} | korelasyon "
               f"{(d['korelasyon'] if d['korelasyon'] is not None else float('nan')):.2f} | "

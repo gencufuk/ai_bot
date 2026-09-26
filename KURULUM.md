@@ -1,76 +1,112 @@
-# AI Ensemble Sniper V18.4 — Kurulum (sürükle-bırak)
+# AI Ensemble Sniper V18.4 — Temiz Kurulum
 
-Kurulum paketi (`ai_bot_v18_4_paket.zip`) **yalnızca** kod dosyalarını ve kurtarılmış iki
-geçmiş dosyasını içerir. Sunucudaki hiçbir veri dosyasının (CSV, model, log, `.env`) üzerine yazmaz.
-
-## ⛔ Klasörü silmeyin
-`/root` içindeki şu dosyalar botun hafızasıdır; silinirse geri gelmez:
-
-| Dosya | Ne |
-|---|---|
-| `.env` | API anahtarları |
-| `core_islem_verileri.csv`, `core_islem_verileri_v2.csv` | işlem geçmişi |
-| `shadow_sinyaller.csv`, `shadow_sinyaller_etiketli.csv` | girilmeyen sinyaller |
-| `core_xgboost_model.json`, `filter_model.json` | modeller |
-| `*.log`, varsa `*.bozuk_*` / `*.legacy_*` | loglar / kurtarılabilir veri |
-| `venv/` | Python ortamı |
-
-Açık pozisyonlar Redis'te tutulur; dosya kopyalamak onları etkilemez.
-
-## ⛔ GitHub reposunun tamamını kopyalamayın
-Repodaki CSV/JSON dosyaları sizin eski yüklemenizdir ve sunucudaki güncel verinin üzerine yazar.
-Özellikle repodaki `core_islem_verileri_v2.csv` aslında bir **model dosyası** (yükleme hatası).
-Sadece paketin içeriğini kopyalayın.
+Paket (`ai_bot_v18_4_paket.zip`) yalnız kod dosyalarını ve kurtarılmış iki geçmiş dosyasını içerir.
+Kurulum aracı (`tools/temiz_kurulum.py`) **hiçbir dosyayı silmez**:
+- eski bot dosyalarını tarihli bir arşiv klasörüne (`/root/eski_bot_<tarih>/`) taşır,
+- yeni sürümü kurar,
+- yeni sürümün kullandığı canlı verileri arşivden geri kopyalar.
 
 ## Adımlar
-1. **Botu durdurun** (screen/tmux içinde Ctrl+C ya da `pkill -f ai_bot.py`).
-   Açık pozisyonlar Redis'te kalır; bot yeniden başlayınca izlemeye devam eder.
-2. **Yedek alın**
+1. **Botu durdurun** (screen/tmux içinde Ctrl+C ya da `pkill -f ai_bot.py`). Açık pozisyonlar Redis'te
+   kalır; bot yeniden başlayınca izlemeye devam eder. Gece 03:00'e yakın yapmayın (trainer çalışmasın).
+2. **Tam yedek alın.** Yedek `.env` içerir, kimseyle paylaşmayın:
    ```bash
    cd /root && tar czf /root/yedek_$(date +%F).tgz --exclude=./venv .
    ```
-3. **Paketin İÇİNDEKİLERİ `/root`'a sürükleyin** (WinSCP/FileZilla):
-   - `ai_bot.py`, `ai_trainer.py`, `shadow_labeler.py` → üzerine yazılsın
-   - `backfill_sinyaller.py`, `sniper/`, `tools/`, iki adet `*.onarildi.csv` → yeni dosyalar
-4. **Kontrol**
+3. **Zip'i `/root`'a yükleyip açın** (WinSCP/FileZilla ile sürükleyin):
    ```bash
-   /root/venv/bin/python tools/kurulum_kontrol.py
+   cd /root && unzip ai_bot_v18_4_paket.zip
    ```
-   ❌ varsa botu başlatmayın.
-5. **AI ayarı (önerilen)**
-   - Örneklem dışı testte gürültü olduğu ölçülen eski filtre modelini kaldırın: `mv filter_model.json filter_model.json.emekli`.
-   - Core model bloklamaya devam eder. V18.4'te engellenen sinyaller de etiketlendiği için bloklama artık eğitim verisini azaltmıyor.
-   - Elle tuttuğunuz coin varsa `.env` dosyasına ekleyin: `MANUEL_COINLER=ETH,SOL`. Bot bu coinleri hiçbir koşulda satmaz.
+4. **Planı görün.** Bu adım hiçbir şeyi değiştirmez:
+   ```bash
+   python3 /root/ai_bot_v18_4_paket/tools/temiz_kurulum.py
+   ```
+   Üç liste çıkar: ARŞİVE TAŞINACAK, DOKUNULMAYACAK, TANINMAYAN. Taşınacaklar arasında başka bir işte
+   kullandığınız dosya varsa önce onu başka bir yere alın.
+5. **Uygulayın:**
+   ```bash
+   python3 /root/ai_bot_v18_4_paket/tools/temiz_kurulum.py --uygula
+   ```
+   Sonda kurulum kontrolü çalışır. ❌ varsa botu başlatmayın.
 6. **Botu başlatın.** Telegram'a "CORE V18.4 başladı" mesajı gelir.
-7. **Veri hattını başlatın** (bot çalışırken de olur)
-   ```bash
-   /root/venv/bin/python shadow_labeler.py                              # ~500 geçmiş pozisyon + shadow; birkaç dk
-   /root/venv/bin/python backfill_sinyaller.py --gun 180 --evren 80     # 10-30 dk; kesilirse kaldığı yerden devam
-   /root/venv/bin/python ai_trainer.py --kuru && cat egitim_raporu.json
+7. **Cron** (`crontab -e`): mevcut 03:00 trainer satırınız aynı kalabilir; etiketleyiciyi ondan önce ekleyin:
    ```
-8. **Cron değişmez** (02:45 labeler, 03:00 trainer). Trainer kapılardan geçen bir model üretirse
-   bot onu 5 dk içinde yükler ve Telegram'dan bildirir.
-9. **İsteğe bağlı: V18.4 geçmiş simülasyonu** (bot çalışırken de olur, API anahtarı gerekmez)
-   ```bash
-   /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20   # ~1 dk deneme
-   /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05              # tam: ~10-20 dk
-   cat v184_sim_rapor.txt
+   45 2 * * * cd /root && /root/venv/bin/python shadow_labeler.py >> labeler.log 2>&1
+   0 3 * * *  cd /root && /root/venv/bin/python ai_trainer.py >> trainer.log 2>&1
    ```
-   Fiyat verisi `sim_onbellek/` klasörüne iner (tekrar çalıştırınca hızlıdır). `v184_sim_rapor.txt` dosyasını
-   paylaşırsanız sonuçları birlikte yorumlarız.
+8. **Veri hattını bir kez çalıştırın** (bot çalışırken de olur):
+   ```bash
+   cd /root && venv/bin/python shadow_labeler.py
+   venv/bin/python backfill_sinyaller.py --gun 180 --evren 80     # 10-30 dk; kesilirse kaldığı yerden devam
+   venv/bin/python ai_trainer.py --kuru && cat egitim_raporu.json
+   ```
+9. **Temizlik:**
+   ```bash
+   rm -rf /root/ai_bot_v18_4_paket /root/ai_bot_v18_4_paket.zip   # hemen
+   rm -rf /root/eski_bot_<tarih>                                    # 1-2 hafta sorunsuz çalışınca
+   ```
+
+## Kurulumdan sonra `/root`
+| Dosya | Ne | Kaynak |
+|---|---|---|
+| `ai_bot.py`, `ai_trainer.py`, `shadow_labeler.py`, `backfill_sinyaller.py`, `sniper/`, `tools/` | kod | paket |
+| `.env`, `venv/` | API anahtarları, Python ortamı | dokunulmaz |
+| `core_islem_verileri.csv`, `core_islem_verileri_v2.csv` | işlem kayıtları (bot yazar) | eski kurulumdan kopyalanır |
+| `core_islem_verileri_v2_gecmis.onarildi.csv`, `core_islem_verileri_v2.csv.yedek.onarildi.csv` | kurtarılmış 31 Mayıs – 20 Eylül geçmişi | paket |
+| `shadow_sinyaller.csv` | girilmeyen sinyaller (bot yazar) | eski kurulumdan kopyalanır |
+| `core_xgboost_model.json` | core AI modeli (Haziran'dan beri aynı dosya; Ağustos botu da bunu kullanıyordu) | eski kurulumdan kopyalanır |
+| `etiketli_sinyaller.csv`, `backfill_sinyaller.csv`, `egitim_raporu.json`, `*.log` | eğitim verisi, rapor, loglar | çalıştıkça oluşur |
+
+**Getirilmeyenler (arşivde kalır):**
+- `filter_model.json`: Ağustos verisini ezberlemiş filtre modeli.
+- `shadow_sinyaller_etiketli.csv`: eski etiketleyicinin çıktısı.
+- Eski loglar, `*.yedek` ve `*.bak` kopyaları, eski kod.
+
+**Dokunulmayanlar:**
+- Gizli dosyalar (`.env`, `.ssh` ...) ve `venv/`.
+- Redis dosyaları (`*.rdb`, `*.aof`).
+- `yedek_*.tgz` yedekleri ve `.sh` betikleri.
+- crontab'da adı geçen dosyalar.
+- `ufuk_islem_verileri.csv` gibi başka bir bota ait olabilecek veriler.
+- Tanınmayan her şey.
+
+Taşınacak dosyalardan birini çalıştıran bir süreç varsa (bot, trainer ya da aynı klasördeki başka bir bot) araç uygulamayı reddeder.
+
+## AI ayarı
+V18.4 `AI_GOLGE_MOD = False` ile core modele göre bloklar (skor < 0.65 → alım yok). Ağustos'taki V18.0.2
+de aynı modelle aynı eşikte bloklama yapıyordu. Yani bu ayar Ağustos davranışını korur.
+
+Gece eğitimi artık "ezberleme" yapmaz. V3 trainer yeni bir modeli yalnız örneklem dışı testleri geçerse
+yayınlar, geçemezse mevcut model kalır. Çoğu gece "yayınlanmadı" görmeniz normaldir. Ezberleyen model
+geçmişte mükemmel, gelecekte yazı-tura olur: eski filtre modeli eğitildiği dönemde AUC 0.75–0.91,
+sonrasında 0.50.
+
+Elle tuttuğunuz coin varsa `.env` dosyasına ekleyin: `MANUEL_COINLER=ETH,SOL`. Bot bu coinleri hiçbir koşulda satmaz.
+
+## İsteğe bağlı: geçmiş simülasyonu
+Bot çalışırken de olur, API anahtarı gerekmez:
+```bash
+cd /root && venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20   # ~1 dk deneme
+cd /root && venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05              # tam: ~10-20 dk
+cat v184_sim_rapor.txt
+```
+Rapor, Ağustos botunun (V18.0.2) ve V18.4'ün aynı fiyatlarda ne yapacağını karşılaştırır.
 
 ## Geri dönüş
-Botu durdurup yalnızca eski kod dosyalarını geri koyun (veri dosyalarına dokunmayın):
 ```bash
-cd /root && tar xzf yedek_TARIH.tgz ./ai_bot.py ./ai_trainer.py ./shadow_labeler.py
+python3 /root/tools/temiz_kurulum.py --geri-al /root/eski_bot_<tarih>
 ```
+Eski kurulum yerine döner. V18.4 dosyaları ve V18.4 döneminde yazılan veriler `v184_kaldirilan_<tarih>/`
+klasörüne taşınır; hiçbir şey silinmez.
 
 ## Pakettekiler
-- `ai_bot.py`: V18.4 bot
-- `ai_trainer.py`: V3 trainer
-- `shadow_labeler.py`: V2 labeler
-- `backfill_sinyaller.py`: geçmiş sinyal üretimi
-- `sniper/`: ortak modüller
-- `tools/csv_onar.py`, `tools/kurulum_kontrol.py`, `tools/gecmis_simulasyon.py` (gerçekleşen işlemlerin bütçe replay'i), `tools/v184_simulasyon.py` (V18.4'ün geçmiş fiyatlarla simülasyonu)
-- `core_islem_verileri_v2_gecmis.onarildi.csv`: 31 Mayıs – 14 Eylül işlem geçmişiniz. Başka bottan karışan 9 satır ve feature'sız sahiplenilmiş 5 satır ayıklandı. Labeler bunu otomatik okur.
+- `ai_bot.py` (V18.4), `ai_trainer.py` (V3), `shadow_labeler.py` (V2), `backfill_sinyaller.py`, `sniper/`
+- `tools/`:
+  - `temiz_kurulum.py`: bu kurulum
+  - `kurulum_kontrol.py`
+  - `csv_onar.py`
+  - `gecmis_simulasyon.py`
+  - `v184_simulasyon.py`
+- `core_islem_verileri_v2_gecmis.onarildi.csv`: 31 Mayıs – 14 Eylül işlem geçmişiniz. Başka bottan karışan
+  9 satır ve feature'sız sahiplenilmiş 5 satır ayıklandı. Labeler bunu otomatik okur.
 - `core_islem_verileri_v2.csv.yedek.onarildi.csv`: kolon kayması onarılmış 16–20 Eylül V2 kayıtları.
