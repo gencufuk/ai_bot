@@ -1,0 +1,38 @@
+[2026-09-06 14:55:13] BASARILI: Toplam 596 veri ile egitildi. 191 zararli islem ezberlendi.
+[2026-09-07 03:00:05] BASARILI: Toplam 596 veri ile egitildi. 191 zararli islem ezberlendi.
+[2026-09-08 03:00:05] BASARILI: Toplam 596 veri ile egitildi. 191 zararli islem ezberlendi.
+[2026-09-09 03:00:04] BASARILI: Toplam 596 veri ile egitildi. 191 zararli islem ezberlendi.
+[2026-09-10 03:00:03] BASARILI: Toplam 598 veri ile egitildi. 191 zararli islem ezberlendi.
+[2026-09-11 03:00:04] BASARILI: Toplam 598 veri ile egitildi. 191 zararli islem ezberlendi.
+[2026-09-12 03:00:04] BASARILI: Toplam 600 veri ile egitildi. 193 zararli islem ezberlendi.
+[2026-09-13 03:00:03] BASARILI: Toplam 600 veri ile egitildi. 193 zararli islem ezberlendi.
+[2026-09-14 03:00:05] BASARILI: Toplam 600 veri ile egitildi. 193 zararli islem ezberlendi.
+[2026-09-15 03:00:04] BASARILI: Toplam 603 veri ile egitildi. 196 zararli islem ezberlendi.
+[2026-09-16 03:00:03] BASARILI: Toplam 603 veri ile egitildi. 196 zararli islem ezberlendi.
+[2026-09-17 03:00:04] 📊 605 işlem satırı -> 474 benzersiz pozisyon.
+[2026-09-17 03:00:04] 🛑 Filtre Beyni: Test AUC 0.457 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-17 03:00:04] 🛑 Core Beyin: Test AUC 0.489 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-18 03:00:04] 📊 606 işlem satırı -> 475 benzersiz pozisyon.
+[2026-09-18 03:00:04] 🛑 Filtre Beyni: Test AUC 0.466 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-18 03:00:04] 🛑 Core Beyin: Test AUC 0.494 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-19 03:00:04] 📊 622 işlem satırı -> 488 benzersiz pozisyon.
+[2026-09-19 03:00:04] 🛑 Filtre Beyni: Test AUC 0.516 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-19 03:00:04] 🛑 Core Beyin: Test AUC 0.505 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-20 03:00:04] 📊 639 işlem satırı -> 500 benzersiz pozisyon.
+[2026-09-20 03:00:04] 🛑 Filtre Beyni: Test AUC 0.521 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-20 03:00:04] 🛑 Core Beyin: Test AUC 0.517 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-20 22:47:07] 📊 655 işlem satırı -> 512 benzersiz pozisyon.
+[2026-09-20 22:47:08] 🛑 Filtre Beyni: Test AUC 0.484 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-20 22:47:08] 🛑 Core Beyin: Test AUC 0.500 < 0.55 — model KAYDEDİLMEDİ, eski model korunuyor.
+[2026-09-21 03:00:04] 📊 5 işlem satırı -> 4 benzersiz pozisyon.
+[2026-09-21 03:00:04] ⚠️ Yetersiz veri: 4 pozisyon (< 100), eğitim yapılmadı.
+[2026-09-22 03:00:03] 📊 21 işlem satırı -> 16 benzersiz pozisyon.
+[2026-09-22 03:00:03] ⚠️ Yetersiz veri: 16 pozisyon (< 100), eğitim yapılmadı.
+[2026-09-23 03:00:03] 📊 33 işlem satırı -> 25 benzersiz pozisyon.
+[2026-09-23 03:00:03] ⚠️ Yetersiz veri: 25 pozisyon (< 100), eğitim yapılmadı.
+[2026-09-24 03:00:04] 📊 41 işlem satırı -> 32 benzersiz pozisyon.
+[2026-09-24 03:00:04] ⚠️ Yetersiz veri: 32 pozisyon (< 100), eğitim yapılmadı.
+[2026-09-25 03:00:05] 📊 41 işlem satırı -> 32 benzersiz pozisyon.
+[2026-09-25 03:00:05] ⚠️ Yetersiz veri: 32 pozisyon (< 100), eğitim yapılmadı.
+[2026-09-26 03:00:04] 📊 45 işlem satırı -> 34 benzersiz pozisyon.
+[2026-09-26 03:00:04] ⚠️ Yetersiz veri: 34 pozisyon (< 100), eğitim yapılmadı.
