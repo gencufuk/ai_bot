@@ -34,8 +34,8 @@ Ayrıca `core_xgboost_model.json` (AI modeli) ve loglar bulunur. Eski ayrı dosy
    ```
 4. **İlk kez tek dosya düzenine geçiyorsanız** veri dosyalarını birleştirin. Önce planı görün, sonra uygulayın:
    ```bash
-   python3 /root/tools/veri_birlestir.py
-   python3 /root/tools/veri_birlestir.py --uygula
+   cd /root && venv/bin/python tools/veri_birlestir.py
+   cd /root && venv/bin/python tools/veri_birlestir.py --uygula
    ```
    Birleştirilen eski dosyalar `veri_arsiv_<tarih>/` klasörüne taşınır.
 5. Botu başlatın:
@@ -63,8 +63,8 @@ Ayrıca `core_xgboost_model.json` (AI modeli) ve loglar bulunur. Eski ayrı dosy
 5. Uygulayın: aynı komutu `--uygula` ile çalıştırın. Sonda kurulum kontrolü çalışır; ❌ varsa botu başlatmayın.
 6. Eski kurulumdan getirilen veri dosyalarını birleştirin. Önce planı görün, sonra uygulayın:
    ```bash
-   python3 /root/tools/veri_birlestir.py
-   python3 /root/tools/veri_birlestir.py --uygula
+   cd /root && venv/bin/python tools/veri_birlestir.py
+   cd /root && venv/bin/python tools/veri_birlestir.py --uygula
    ```
    Makine yeniyse ve birleştirilecek dosya yoksa bu adım bir şey yapmaz.
 7. Botu başlatın. Telegram'a "CORE V18.4 başladı" mesajı gelir.
@@ -127,7 +127,7 @@ Kod ve eğitim verisi paylaşılır; hesap bilgileri ve işlem kayıtları payla
      scp /root/core_xgboost_model.json root@DIGER_IP:/root/
      scp /root/etiketli_sinyaller.csv root@DIGER_IP:/root/gelen_etiketli.csv
      # ikinci makinede:
-     python3 /root/tools/veri_birlestir.py --ekle /root/gelen_etiketli.csv --uygula
+     cd /root && venv/bin/python tools/veri_birlestir.py --ekle /root/gelen_etiketli.csv --uygula
      ```
    İşlem kaydı (`core_islem_verileri_v2.csv`) ve `.env` kopyalanmaz.
 5. **Cron:** aynı saatlerle kurulur.

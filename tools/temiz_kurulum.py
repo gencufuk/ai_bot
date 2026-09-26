@@ -20,7 +20,7 @@ Kullanım (bot DURDURULMUŞKEN):
   cd /root && unzip ai_bot_v18_4_paket.zip
   python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py            # KURU: yalnız planı gösterir
   python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py --uygula   # uygular
-  python3 /root/tools/veri_birlestir.py --uygula               # getirilen veriyi tek düzene birleştirir
+  cd /root && venv/bin/python tools/veri_birlestir.py --uygula  # getirilen veriyi tek düzene birleştirir
 Kurulu bir sistemde yalnız KODU güncellemek (veri dosyalarına dokunmaz; eski kod eski_kod_<tarih>/):
   python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py --guncelle
 Geri almak:
@@ -255,8 +255,8 @@ def kur(hedef, paket=PAKET, uygula=False, kontrol=True, simdi=None):
     print(f"""
 SONRAKİ ADIMLAR
 1) Eski kurulumdan gelen veri dosyalarını tek düzene birleştirin (önce plan, sonra uygula):
-     python3 {hedef}/tools/veri_birlestir.py
-     python3 {hedef}/tools/veri_birlestir.py --uygula
+     cd {hedef} && venv/bin/python tools/veri_birlestir.py
+     cd {hedef} && venv/bin/python tools/veri_birlestir.py --uygula
 2) Botu her zamanki komutunuzla başlatın (Telegram'a "CORE V18.4" mesajı gelir), ör.:
      cd {hedef} && screen -dmS btc_bot bash -c "source venv/bin/activate && python3 -u ai_bot.py"
 3) {cron_onerisi(cron, hedef)}
@@ -302,8 +302,8 @@ def guncelle(hedef, paket=PAKET, simdi=None):
         _kopyala(os.path.join(paket, ad), os.path.join(hedef, ad))
     print(f"✅ Kod güncellendi: {', '.join(KOD)}\n   Veri dosyalarına dokunulmadı. Eski kod: {arsiv}\n"
           f"Sonraki adım: yeni sürüm ilk kez kuruluyorsa veri dosyalarını birleştirin, sonra botu başlatın:\n"
-          f"   python3 {hedef}/tools/veri_birlestir.py            # plan\n"
-          f"   python3 {hedef}/tools/veri_birlestir.py --uygula\n"
+          f"   cd {hedef} && venv/bin/python tools/veri_birlestir.py            # plan\n"
+          f"   cd {hedef} && venv/bin/python tools/veri_birlestir.py --uygula\n"
           f"Paket klasörü ve zip artık gereksiz:  rm -rf {paket} {paket}.zip")
     return 0
 

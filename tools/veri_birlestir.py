@@ -13,13 +13,13 @@ Birleştirme (--uygula, bot DURMUŞKEN):
 Kaynak dosyalar SİLİNMEZ, veri_arsiv_<tarih>/ klasörüne taşınır.
 
 Başka makinenin eğitim verisini almak (bot çalışırken de olur):
-  python3 tools/veri_birlestir.py --ekle /root/gelen_etiketli.csv --uygula
+  venv/bin/python tools/veri_birlestir.py --ekle /root/gelen_etiketli.csv --uygula
 İki makine etiketli_sinyaller.csv dosyalarını karşılıklı gönderip --ekle ile aldıkça eğitim verileri aynı olur.
 İşlem kayıtları hesaba özel olduğu için --ekle yalnız eğitim verisini birleştirir.
 
-Kullanım (bot klasöründe):
-  python3 tools/veri_birlestir.py            # KURU: yalnız planı gösterir
-  python3 tools/veri_birlestir.py --uygula
+Kullanım (bot klasöründe, botun Python'uyla: pandas gerekir):
+  venv/bin/python tools/veri_birlestir.py            # KURU: yalnız planı gösterir
+  venv/bin/python tools/veri_birlestir.py --uygula
 """
 import argparse
 import csv
@@ -35,9 +35,12 @@ for _yol in (KOK, os.path.join(KOK, 'tools')):
         sys.path.insert(0, _yol)
 
 import temiz_kurulum as tk  # noqa: E402
-from sniper.csv_kayit import atomik_yaz, dosya_kilidi  # noqa: E402
-from sniper.etiket_deposu import TUM_KOLONLAR, VERI_YOK  # noqa: E402
-from sniper.etiketleme import ETIKET_SURUMU  # noqa: E402
+try:
+    from sniper.csv_kayit import atomik_yaz, dosya_kilidi  # noqa: E402
+    from sniper.etiket_deposu import TUM_KOLONLAR, VERI_YOK  # noqa: E402
+    from sniper.etiketleme import ETIKET_SURUMU  # noqa: E402
+except ImportError as _e:   # sistem python3'ünde pandas / pandas_ta yok; botun venv'i gerekir
+    sys.exit(f"❌ {_e}\nBu aracı botun Python'uyla çalıştırın:  cd {KOK} && venv/bin/python tools/veri_birlestir.py")
 
 V1 = ['Islem_Zamani', 'Sembol', 'Sinyal', 'Kasa_Tipi', 'Giris_RSI', 'Giris_Vol_Oran', 'Giris_ATR_Pct',
       'Giris_Fiyat', 'Cikis_Fiyat', 'Kar_Orani', 'Net_Kar_USDT', 'Cikis_Tipi', 'Sure_Saat']
