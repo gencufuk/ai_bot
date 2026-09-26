@@ -1,7 +1,8 @@
-# PROJE: AI ENSEMBLE SNIPER BOT (V18.2 — GÖLGE MOD + REJİM FİLTRESİ)
+# PROJE: AI ENSEMBLE SNIPER BOT (V18.4 — GÖLGE MOD + REJİM FİLTRESİ + TEK TİP ETİKET)
 
 > Bu doküman **fiilen çalışan** sistemi anlatır. Henüz yapılmamış hedefler en alttaki
-> "PLANLANAN" bölümündedir. (Son güncelleme: 2026-09-17)
+> "PLANLANAN" bölümündedir. (Son güncelleme: 2026-09-26)
+> V18.3 → V18.4 analizi, kanıtları ve deploy adımları: `ANALIZ_V18.4.md`.
 
 ## Amaç
 Binance **Spot** piyasasında hacimli altcoinlerde kısa vadeli (15m) momentum al-sat.
@@ -18,27 +19,33 @@ doğrulanmadığı için bot GÖLGE MODDA çalışır (aşağıda).
 ## Dosyalar (sunucuda /root altında)
 | Dosya | Görev |
 |---|---|
-| `ai_bot.py` | Ana alım-satım motoru (3 async döngü). Log öneki: `[CORE V18.0.2]` |
-| `ai_trainer.py` | Her gece 03:00 (cron) iki modeli eğitir; **AUC ≥ 0.55 doğrulamasını geçemeyen model kaydedilmez** |
-| `shadow_labeler.py` | Her gece 02:45 (cron) girilmeyen sinyalleri sanal sonuçla etiketler |
+| `ai_bot.py` | Ana alım-satım motoru (3 async döngü + bildirim, model izleme, watchdog görevleri). Log öneki: `[CORE V18.4]` |
+| `ai_trainer.py` | V3: her gece 03:00 (cron) tek karar modelini eğitir; purged walk-forward CV + istatistiksel/ekonomik kapılar; geçemeyen model kaydedilmez. Rapor: `egitim_raporu.json` |
+| `shadow_labeler.py` | V2: her gece 02:45 (cron) core + shadow sinyallerini **tek tip etiketle** etiketler → `etiketli_sinyaller.csv` |
+| `backfill_sinyaller.py` | Elle/aylık: geçmiş OHLCV'den sinyal üretir + aynı etiketle etiketler → `backfill_sinyaller.csv` |
+| `sniper/` | Ortak modüller: `csv_kayit` (güvenli CSV), `risk_motoru` (çıkış kararları), `ozellikler` (kural + feature), `etiketleme`, `etiket_deposu`, `model_karti` |
+| `tools/csv_onar.py` | Kolon kayması yaşamış CSV yedeklerini onarır |
 | `core_islem_verileri.csv` | V1 işlem kaydı (13 kolon, eski format — uyumluluk için yazılmaya devam ediyor) |
 | `core_islem_verileri_v2.csv` | V2 işlem kaydı (başlıklı, 25 kolon: V1 + genişletilmiş feature'lar + AI skorları) |
 | `shadow_sinyaller.csv` | Kural filtresini geçip **girilmeyen** sinyaller (sebep: AI_RED / TEK_ALIM_KURALI / BAKIYE_YETERSIZ / REJIM_YATAY) |
 | `shadow_sinyaller_etiketli.csv` | Labeler çıktısı: shadow sinyaller + sanal sonuç |
-| `core_xgboost_model.json` | Ana model (kâr olasılığı; 4 feature: RSI, Vol_Oran, ATR_Pct, Sinyal_Encoded) |
-| `filter_model.json` | Filtre modeli (zarar riski; 3 feature) |
+| `core_xgboost_model.json` (+ `.kart.json`) | Karar modeli. Feature listesi modelin `feature_names`'inden, eşik/metrikler karttan okunur; bot 5 dk'da bir değişikliği kontrol edip yeniden yükler |
+| `filter_model.json` | Eski (doğrulanmamış) filtre modeli; V3 trainer yeni model yayına alınca `.emekli_<ts>` olarak kenara alır |
+| `etiketli_sinyaller.csv` / `backfill_sinyaller.csv` | Birleşik etiketli sinyal tablosu (Kaynak: core/shadow/backfill), trainer'ın tek girdisi |
 | `ufuk_islem_verileri.csv` | İkinci botun verisi — trainer havuzuna girer (⚠️ o bot eski kodla çalışıyorsa komisyonsuz kâr yazar) |
 
-CSV/state dosyalarını ELLE OLUŞTURMAYIN — kod ilk ihtiyaçta başlığıyla oluşturur;
-elle açılan boş dosya başlıksız kalır ve pipeline bozulur.
+CSV/state dosyalarını ELLE OLUŞTURMAYIN — kod ilk ihtiyaçta başlığıyla oluşturur.
+V18.4 CSV katmanı mevcut veriyi asla silmez: şema değişince yeni kolonlar sona eklenir; başlıksız
+veya kaymış dosya bayt bayt arşivlenip (`.legacy_<ts>` / `.bozuk_<ts>`) Telegram'a bildirilir.
 
 ## AI Modları
-- **GÖLGE MOD (şu an aktif, `AI_GOLGE_MOD = True`):** Model skorları her sinyalde
+- **GÖLGE MOD (`AI_GOLGE_MOD = True`; önerilen — kodda şu an `False`, bkz. ANALIZ §2.3):** Model skorları her sinyalde
   hesaplanır, loglanır ve CSV'lere yazılır ama **işlem bloklanmaz**. Sebep: mevcut
   modeller doğrulamada AUC ~0.46-0.50 (rastgele) çıktı; bloklama = rastgele işlem elemek.
-- **Bloklama modu (`AI_GOLGE_MOD = False`):** ai_score < 0.65 (`AI_MIN_OLASILIK`) veya
-  filter_score > 0.45 (`FILTRE_MAX_RISK`) ise işlem reddedilir ve shadow'a `AI_RED` yazılır.
-  Bu moda geçiş şartı: trainer'da AUC eşiğini geçen bir model.
+- **Bloklama modu (`AI_GOLGE_MOD = False`):** skor < eşik (kartlı modelde karttaki eşik, kartsızda
+  0.65) veya filtre skoru > 0.45 ise işlem reddedilir ve shadow'a `AI_RED` yazılır. Model hiç yüklü
+  değilse yeni alım yapılmaz (`AI_MODEL_YOK`). Bu moda geçiş şartı: V3 trainer'ın yayına aldığı,
+  gölge modda 1-2 hafta tutarlılığı izlenmiş bir model.
 
 ## Rejim Filtresi (YATAY / TREND)
 - BTC 15m **ADX(14)** ölçülür: ADX < 20 (`ADX_TREND_ESIK`) → **YATAY**, üstü → **TREND**.
@@ -67,40 +74,54 @@ elle açılan boş dosya başlıksız kalır ve pipeline bozulur.
    sat (MOON BAG) → **YATAY rejimde** pozisyon 1.5 saat ±%1 bandında sıkışıp hacim de
    söndüyse MOMENTUM ÖLDÜ çıkışı (trend rejiminde bu kural devre dışı) → 4 saat sonunda
    kârsızsa ZAMAN AŞIMI çıkışı. Peş peşe 2 stop = 24 saat kara liste; her çıkışta 1 saat
-   cooldown. 30 dk'da bir cüzdan senkronizasyonu (ticker verisi hazır olmadan çalışmaz).
+   cooldown. 30 dk'da bir cüzdan senkronizasyonu (ticker verisi hazır olmadan çalışmaz;
+   10 dk'dan genç pozisyona dokunmaz; sahiplenilen bakiye Telegram'a bildirilir; `.env`
+   `MANUEL_COINLER` hariç tutulur).
+   V18.4: karar mantığı `sniper/risk_motoru.py`'de (saf, testli). Sembol bazında hata
+   izolasyonu; satış alımda kaydedilen adedi (`:adetler`) aşmaz; emirler `newClientOrderId`
+   ile idempotent; yarı satış sonrası taban kâr kilidini ezmez; zaman aşımı uzatması
+   `:zaman_ref`'i günceller (giriş zamanı değişmez); momentum kontrolü kapanmış mumlarla.
 3. **telegram_handler (1 sn):** Sadece `TELEGRAM_CHAT_ID`'den gelen `/durum` ve `/kar`
    komutlarını işler; update offset hata durumunda sıfırlanmaz.
+4. **Yardımcı görevler (V18.4):** `bildirim_gorevi` (risk döngüsü Telegram'ı beklemez; kuyruk),
+   `model_izleme_gorevi` (5 dk; model/kart değişince yeniden yükler, hatada eskisini korur),
+   `watchdog_gorevi` (VIP 60 sn / radar 180 sn tur tamamlamazsa alarm).
 
 ## Veri / Eğitim Pipeline'ı (gece cron sırası)
 ```
-02:45 shadow_labeler.py : 5 saatten eski shadow sinyalleri → sinyal sonrası 4 saatlik
-                          15m mumlarla bracket simülasyonu (+%4 TP / -%3 SL, aynı mumda
-                          ikisi de görülürse muhafazakârca SL) → etiketli CSV'ye append
-03:00 ai_trainer.py     : V1 CSV'leri okur → kısmi+tam çıkışları POZİSYON bazında
-                          birleştirir → kronolojik son %20 test, AUC hesabı →
-                          AUC ≥ 0.55 ise tüm veriyle yeniden eğitip kaydeder,
-                          değilse ESKİ MODEL KORUNUR (log: ai_trainer_history.log)
+02:45 shadow_labeler.py : 4s15dk'dan eski shadow sinyalleri + KAPANMIŞ core pozisyonları →
+                          sinyal dakikasından başlayan 240 adet 1m mumla tek tip etiket
+                          (ATR stop / ilk kâr eşiği / +%1 kâr kilidi / 4 saat, komisyon dahil)
+                          → etiketli_sinyaller.csv
+03:00 ai_trainer.py     : etiketli_sinyaller.csv + backfill_sinyaller.csv → purged walk-forward
+                          CV (episod bazlı bootstrap) → kapılar: OOS AUC ≥ 0.55, %95 alt sınır > 0.5,
+                          katların çoğunda > 0.5, ekonomik permütasyon testi, canlı transfer →
+                          geçerse model + kart atomik kaydedilir, bot hot-reload eder;
+                          geçmezse ESKİ MODEL KORUNUR (egitim_raporu.json, ai_trainer_history.log)
+(elle) backfill_sinyaller.py --gun 180 --evren 80 : geçmiş sinyaller (kapalı mum modu)
 ```
-Trainer henüz V1 feature'larıyla eğitiyor; v2 + etiketli shadow verisi yeterince
-birikince (birkaç yüz satır) genişletilmiş feature'larla eğitime geçilecek.
 
 ## Redis Key Şeması (prefix: `PORTFOY`)
 `:islem_listesi` (sym→giriş fiyatı), `:islem_miktarlari` (USDT maliyet), `:max_karlar`,
 `:half_sold`, `:ai_data` (sinyal feature'ları JSON), `:giris_zamanlari`, `:realize_karlar`,
-`:last_rsi_check`, `:last_mom_check`, `:stop_counts`, `:kara_liste`, `:cooldowns`,
-`:toplam_kar`, `:shadow_son`
+`:last_rsi_check`, `:last_mom_check`, `:zaman_ref` (V18.4, zaman aşımı referansı),
+`:adetler` (V18.4, pozisyonun net coin adedi), `:stop_counts`, `:kara_liste`, `:cooldowns`,
+`:toplam_kar`, `:shadow_son`.
+Bir pozisyonun alanları (`POZISYON_ANAHTARLARI`) alımda sıfırlanıp tek MULTI/EXEC ile yazılır,
+çıkışta tek MULTI/EXEC ile silinir.
 
 ## Bilinen Sınırlar
 - **Borsa tarafında stop-loss emri YOK** — tüm koruma botun canlı olmasına bağlı.
-- Sinyaller kapanmamış (canlı) 15m mumla üretiliyor (repaint riski).
+- Sinyaller varsayılan olarak kapanmamış (canlı) 15m mumla üretiliyor (repaint riski;
+  backfill kapalı mumla çalıştığından dağılım farkı). `SINYAL_KAPALI_MUM = True` ile birebir parite.
 - 3.5 aylık geriye dönük veri: sistem komisyon dahil yaklaşık başa baş; kârın tamamı
   tek aydan (Ağustos 2026). En büyük zarar kalemi ZAMAN AŞIMI çıkışları.
 
 ## PLANLANAN (henüz yapılmadı)
 1. **Hibrit felaket stopu:** Alımdan sonra borsaya ~%-10 statik STOP_LOSS_LIMIT; her
    satıştan önce iptal, kısmi satış sonrası yeniden koyma, vip döngüsünde mutabakat.
-2. Trainer'ın v2 + shadow etiketli veriyle genişletilmiş feature'larda eğitilmesi;
-   AUC eşiği geçilince gölge moddan bloklama moduna geçiş.
+2. ~~Trainer'ın v2 + shadow etiketli veriyle eğitilmesi~~ (V18.4: tek tip etiket + backfill +
+   trainer V3 yapıldı). Kalan: V3'ün yayına aldığı modelin gölge modda izlenip bloklamaya geçiş.
 3. systemd servisi (Restart=always) + açılış/kapanış Telegram bildirimi.
 4. Shadow verisi birikince `ADX_TREND_ESIK` kalibrasyonu (20 mi, 23 mü; ya da "kasa yarıya" yumuşatması).
 5. ccxt.pro WebSocket'e geçiş, dinamik kasa (bakiye yüzdesi) — düşük öncelik.
