@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 import xgboost as xgb
 
-from sniper.model_karti import ModelYuvasi, modeli_kartla_kaydet, kart_oku, kart_yolu
+from sniper.model_karti import ModelYuvasi, modeli_kartla_kaydet
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

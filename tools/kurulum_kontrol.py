@@ -100,6 +100,8 @@ def modeller():
 def csv_dosyalari():
     for yol in sorted(glob.glob(os.path.join(KOK, '*.csv'))):
         ad = os.path.basename(yol)
+        if ad.startswith('v184_sim_'):
+            continue  # simülasyon çıktısı, bot verisi değil
         with open(yol, 'rb') as f:
             bas = f.read(64)
         if bas.lstrip().startswith(b'{'):

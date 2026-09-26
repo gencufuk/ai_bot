@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 *.tmp
 *.tmp.json
+sim_onbellek/
+v184_sim_*

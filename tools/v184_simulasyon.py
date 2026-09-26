@@ -1,0 +1,978 @@
+# -*- coding: utf-8 -*-
+"""V18.4 GEÇMİŞ SİMÜLASYONU: yeni sürüm geçmişte çalışsaydı ne olurdu?
+
+tools/gecmis_simulasyon.py gerçekleşen işlemleri OLDUĞU GİBİ oynatır (o günkü sürümün çıkışlarıyla).
+Bu araç fiyat geçmişini Binance'ten indirir ve V18.4'ün kararlarını yeniden üretir. Çıkış kararlarını
+canlı botun kullandığı kodun AYNISI verir (sniper.risk_motoru).
+
+Kaynaklar (--kaynak):
+  gercek    Botun gerçekten açtığı pozisyonlar; giriş zamanı ve gerçek dolum fiyatı korunur.
+              GERCEK      o günkü sürümün gerçekleşen sonucu (fiyatlardan, komisyon dahil)
+              ESKI_SIM    aynı girişler, Ağustos sürümünün çıkış ayarlarıyla SİMÜLE (kâr kilidi +%0.2,
+                          momentum çıkışı yok, 25 mumluk RSI). GERCEK ile farkı = simülatörün hata payı
+              V184_CIKIS  aynı girişler, V18.4 çıkış motoru
+              V184        + V18.4 giriş filtreleri: BTC onayı (EMA200 histerezisi, ani çöküş koruması),
+                          TREND rejimi (BTC 15m ADX >= 20), ATR <= %3
+              V184_AI     + core model vetosu (model dosyası varsa)
+  backfill  Sinyaller geçmiş 15m mumlardan V18.4 kuralıyla yeniden üretilir (kapalı mum modu; radar:
+            24s hacmi 12M+ olan en çok yükselen 10 parite). "Bot baştan V18.4 olsaydı" sorusunun yaklaşık cevabı.
+              B_V184, B_REJIMSIZ (yatay rejim filtresi olmadan), B_V184_AI
+
+Bütçe: her senaryo, botun kurallarıyla oynatılır: aynı coinde tek pozisyon, tam çıkıştan sonra 1 saat
+bekleme, üst üste 2 stopta 24 saat kara liste, serbest bakiye >= kasa x 1.01. Kısmi satışın parası satış
+anında kasaya döner.
+
+Fiyat yolu: 1m mum yeşilse açılış→dip→tepe→kapanış, kırmızıysa açılış→tepe→dip→kapanış. Düşen bacakta
+stop/kısmi eşiği kesilirse karar tam eşik fiyatında verilir; dolum = eşik x (1 - --kayma-seviye)
+(canlıda 2 sn'lik tarama gecikmesi + piyasa emri kayması). Mum eşiğin altında açılırsa açılıştan,
+zaman/momentum/RSI çıkışları o anki fiyattan (--kayma-zaman). Zaman tetikleri dakikada 4 noktada
+değerlendirilir (canlı bot 2 sn'de bir).
+
+Bilinen sınırlar:
+  - Eski sürümler 4 saatlik süre uzatmasında giriş zamanını sıfırlıyordu (CSV'deki Sure_Saat uzatmadan
+    itibaren). Gerçek giriş, dolum fiyatının 1m mum aralığına düştüğü an aranarak bulunur (k x 4 saat geri);
+    bulunamayanlar raporda sayılır.
+  - BTC rejimi son KAPANMIŞ 15m mumla hesaplanır (canlı bot açık mumu da kullanır).
+  - backfill: kapalı mum modu (canlı varsayılan açık mum), evren bugünkü paritelerdir (delist olanlar yok).
+  - Filtre modeli (filter_model.json) uygulanmaz: Ağustos verisiyle eğitildiği için Ağustos'a uygulanması
+    geleceği görmek olur (ANALIZ_V18.4.md §2).
+
+Kullanım (sunucuda, bot çalışırken de olur; API anahtarı gerekmez, yalnız herkese açık fiyat verisi):
+  cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05
+  /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-07 --bitis 2026-09-06 --kaynak gercek
+  /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20      # 1 dk'lık deneme
+İndirilen mumlar sim_onbellek/ klasöründe tutulur; ikinci çalıştırma çok daha hızlıdır.
+Çıktılar: v184_sim_rapor.txt (özet), v184_sim_rapor.json, v184_sim_pozisyonlar.csv, v184_sim_backfill.csv
+"""
+import argparse
+import datetime
+import glob
+import json
+import os
+import pickle
+import sys
+import time
+from collections import Counter
+from dataclasses import dataclass, replace
+from typing import Callable, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+
+KOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _yol in (KOK, os.path.join(KOK, 'tools')):
+    if _yol not in sys.path:
+        sys.path.insert(0, _yol)
+
+import backfill_sinyaller as bf  # noqa: E402
+import gecmis_simulasyon as gs  # noqa: E402
+from sniper import etiket_deposu as depo_etiket  # noqa: E402
+from sniper import risk_motoru as risk  # noqa: E402
+from sniper.ozellikler import MUM_15M_MS, SinyalAyarlari, ohlcv_df, ozellik_matrisi  # noqa: E402
+
+DK_MS = 60_000
+SAAT_MS = 3_600_000
+GUN_MS = 86_400_000
+TF_MS = {'1m': DK_MS, '15m': MUM_15M_MS, '1h': SAAT_MS}
+
+# ai_bot.py V18.4 RISK_AYAR ile aynı (tests/test_v184_simulasyon.py karşılaştırır)
+RISK_V184 = risk.RiskAyarlari(fee_rate=0.001, zarar_orani_balina=0.020, kar_kilidi_oran=0.010,
+                              max_bekleme_saati=4.0, min_beklenti_orani=0.005, momentum_olu_saat=1.5)
+# Ağustos sürümü (CSV'deki çıkış tiplerinden): kâr kilidi +%0.2 ("🛡️ BAŞA BAŞ KORUMASI"), momentum çıkışı yok
+RISK_ESKI = replace(RISK_V184, kar_kilidi_oran=0.002, momentum_olu_saat=1e9)
+MAX_ATR_V184 = 3.0            # ai_bot.MAX_ATR_PCT (ATR/fiyat > %3 ise sinyal yok)
+COOLDOWN_MS = SAAT_MS         # _pozisyonu_kapat: tam çıkıştan sonra 1 saat
+KARA_LISTE_MS = GUN_MS        # üst üste 2 stop -> 24 saat
+ALIM_KAYMASI = 0.0005         # backfill: sinyal fiyatı -> market alım dolumu (etiketleme ile aynı)
+YOL_OFSET_MS = (0, 20_000, 40_000, 59_000)
+UZATMA_MS = 4 * SAAT_MS
+VARSAYILAN_DESENLER = ['core_islem_verileri.csv', 'core_islem_verileri_v2.csv', '*.onarildi.csv']
+# ESKI_SIM Ağustos sürümünü modeller. V18.3 20-21 Eylül gecesi devreye girdi (CSV: son "BAŞA BAŞ" 20 Eylül,
+# ilk "KÂR KİLİDİ (+%1)" 21 Eylül); doğrulama yalnız bu tarihten önce açılan pozisyonlarla yapılır.
+ESKI_SURUM_BITIS = '2026-09-21'
+SENARYO_ACIKLAMA = {
+    'GERCEK': 'gerçekleşen (o günkü sürüm)',
+    'ESKI_SIM': 'aynı girişler, Ağustos çıkış ayarları (doğrulama)',
+    'V184_CIKIS': 'aynı girişler, V18.4 çıkışı',
+    'V184': 'V18.4 çıkışı + giriş filtreleri',
+    'V184_AI': 'V184 + core model vetosu',
+    'B_V184': 'backfill sinyalleri, V18.4',
+    'B_REJIMSIZ': 'backfill, yatay rejim filtresi yok',
+    'B_V184_AI': 'backfill, V18.4 + AI',
+}
+
+
+def _ms(ts) -> int:
+    return int((pd.Timestamp(ts) - pd.Timestamp('1970-01-01')) // pd.Timedelta(milliseconds=1))
+
+
+def _tarih(ms) -> str:
+    return datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime('%Y-%m-%d %H:%M')
+
+
+# ------------------------------------------------------------------------------------------
+# Mum deposu
+# ------------------------------------------------------------------------------------------
+class VeriYok(Exception):
+    """Sembol borsada yok (delist) ya da veri alınamadı."""
+
+
+class MumDeposu:
+    """fetch_ohlcv sonuçlarını bellekte ve (dizin verilirse) diskte tutar; aynı aralık iki kez indirilmez.
+    Henüz kapanmamış mum asla saklanmaz."""
+
+    def __init__(self, ex, dizin=None, simdi_ms=None, deneme=4):
+        self.ex, self.dizin, self.deneme = ex, dizin, deneme
+        self.simdi_ms = int(simdi_ms if simdi_ms is not None else time.time() * 1000)
+        self._veri: Dict[tuple, np.ndarray] = {}
+        self._kapsam: Dict[tuple, list] = {}
+        self._yok = set()
+        self.istek = 0
+        if dizin:
+            os.makedirs(dizin, exist_ok=True)
+
+    def _dosya(self, sym, tf):
+        return os.path.join(self.dizin, f"{sym.replace('/', '_').replace(':', '_')}_{tf}.pkl")
+
+    def _yukle(self, sym, tf):
+        if (sym, tf) in self._veri:
+            return
+        veri, kapsam = np.empty((0, 6)), []
+        if self.dizin and os.path.exists(self._dosya(sym, tf)):
+            try:
+                with open(self._dosya(sym, tf), 'rb') as f:
+                    d = pickle.load(f)
+                veri = np.asarray(d['veri'], dtype=float).reshape(-1, 6)
+                kapsam = [(int(x), int(y)) for x, y in d['kapsam']]
+            except Exception:  # noqa: BLE001 - bozuk önbellek yeniden indirilir
+                veri, kapsam = np.empty((0, 6)), []
+        self._veri[(sym, tf)], self._kapsam[(sym, tf)] = veri, kapsam
+
+    def _kaydet(self, sym, tf):
+        if not self.dizin:
+            return
+        yol = self._dosya(sym, tf)
+        with open(yol + '.tmp', 'wb') as f:
+            pickle.dump({'veri': self._veri[(sym, tf)], 'kapsam': self._kapsam[(sym, tf)]}, f)
+        os.replace(yol + '.tmp', yol)
+
+    @staticmethod
+    def eksikler(kapsam, a, b):
+        eksik, bas = [], a
+        for x, y in sorted(kapsam):
+            if y <= bas or x >= b:
+                continue
+            if x > bas:
+                eksik.append((bas, x))
+            bas = max(bas, y)
+            if bas >= b:
+                break
+        if bas < b:
+            eksik.append((bas, b))
+        return eksik
+
+    @staticmethod
+    def birlestir(kapsam):
+        sonuc = []
+        for x, y in sorted(kapsam):
+            if sonuc and x <= sonuc[-1][1]:
+                sonuc[-1] = (sonuc[-1][0], max(sonuc[-1][1], y))
+            else:
+                sonuc.append((x, y))
+        return sonuc
+
+    def _cek(self, sym, tf, since):
+        import ccxt
+        for deneme in range(self.deneme):
+            try:
+                self.istek += 1
+                return self.ex.fetch_ohlcv(sym, tf, since=int(since), limit=1000)
+            except ccxt.BadSymbol as e:
+                raise VeriYok(f"{sym}: {e}") from e
+            except ccxt.OperationFailed:   # ağ/zaman aşımı/limit: bekle ve tekrar dene
+                if deneme == self.deneme - 1:
+                    raise
+                time.sleep(2 ** (deneme + 1))
+        return []
+
+    def getir(self, sym, tf, a, b) -> np.ndarray:
+        """[a, b) aralığında açılan KAPANMIŞ mumlar: ndarray (n, 6) = ts, o, h, l, c, v."""
+        if sym in self._yok:
+            raise VeriYok(sym)
+        adim = TF_MS[tf]
+        acik_mum = (self.simdi_ms // adim) * adim          # henüz kapanmamış mumun açılışı
+        a, b = (int(a) // adim) * adim, min(int(b), acik_mum)
+        if b <= a:
+            return np.empty((0, 6))
+        self._yukle(sym, tf)
+        anahtar = (sym, tf)
+        eksik = self.eksikler(self._kapsam[anahtar], a, b)
+        if eksik:
+            yeni, kapsam = [], list(self._kapsam[anahtar])
+            try:
+                for x, y in eksik:
+                    since, son_kapsam = x, y
+                    while since < y:
+                        parca = self._cek(sym, tf, since)
+                        if not parca:
+                            break
+                        yeni.extend(parca)
+                        son = int(parca[-1][0])
+                        if son + adim <= since:
+                            break
+                        since = son + adim
+                        son_kapsam = max(son_kapsam, min(since, acik_mum))
+                    kapsam.append((x, son_kapsam))
+            except VeriYok:
+                self._yok.add(sym)
+                raise
+            if yeni:
+                arr = np.asarray([r[:6] for r in yeni], dtype=float)
+                arr = arr[arr[:, 0] < acik_mum]
+                eski = self._veri[anahtar]
+                birlesik = np.vstack([eski, arr]) if len(eski) else arr
+                _, idx = np.unique(birlesik[:, 0], return_index=True)
+                self._veri[anahtar] = birlesik[idx]
+            self._kapsam[anahtar] = self.birlestir(kapsam)
+            self._kaydet(sym, tf)
+        v = self._veri[anahtar]
+        if not len(v):
+            return v
+        i, j = np.searchsorted(v[:, 0], [a, b], side='left')
+        return v[i:j]
+
+    def getir_df(self, sym, tf, a, b) -> pd.DataFrame:
+        df = ohlcv_df(self.getir(sym, tf, a, b).tolist())
+        df['ts'] = df['ts'].astype('int64')
+        return df
+
+
+# ------------------------------------------------------------------------------------------
+# BTC bağlamı (radar_loop'un BTC_OK ve REJIM kararları, kapalı mumla)
+# ------------------------------------------------------------------------------------------
+class BtcBaglami:
+    def __init__(self, btc_df: pd.DataFrame):
+        self.df = bf.btc_baglami(btc_df)
+        self.kapanis = self.df.index.to_numpy(dtype='int64')
+        self.btc_ok = self.df['btc_ok'].to_numpy(dtype=bool)
+        self.rejim = self.df['rejim'].astype(str).to_numpy()
+        self.adx = self.df['btc_adx'].to_numpy(dtype=float)
+
+    def _i(self, t_ms):
+        return int(np.searchsorted(self.kapanis, t_ms, side='right')) - 1
+
+    def durum(self, t_ms):
+        i = self._i(t_ms)
+        if i < 0:
+            return None
+        return bool(self.btc_ok[i]), str(self.rejim[i]), float(self.adx[i])
+
+    def rejim_at(self, t_ms):
+        i = self._i(t_ms)
+        return 'YATAY' if i < 0 else str(self.rejim[i])
+
+
+# ------------------------------------------------------------------------------------------
+# Çıkış motoru: canlı _pozisyonu_isle'nin fiyat yolu üzerinde tekrarı
+# ------------------------------------------------------------------------------------------
+def rsi_son(kapanislar) -> Optional[float]:
+    import pandas_ta as ta
+    if len(kapanislar) < 15:
+        return None
+    r = ta.rsi(pd.Series(kapanislar, dtype=float), length=14)
+    if r is None or pd.isna(r.iloc[-1]):
+        return None
+    return float(r.iloc[-1])
+
+
+@dataclass
+class SimSonucu:
+    getiri: float        # ilk maliyete göre net getiri (komisyon + satış kayması dahil)
+    bacaklar: list       # [(t_ms, pay, dolum_fiyati, mesaj)]
+    durum: str           # KAPANDI | SINIR (--max-saat doldu, son fiyattan kapatıldı) | ACIK (veri bitti)
+    max_kar: float
+
+    @property
+    def cikis_ms(self):
+        return self.bacaklar[-1][0]
+
+    @property
+    def son_mesaj(self):
+        return self.bacaklar[-1][3]
+
+    @property
+    def cikislar(self):
+        return ' + '.join(b[3] for b in self.bacaklar)
+
+
+class CikisMotoru:
+    def __init__(self, ayar: risk.RiskAyarlari = RISK_V184, kayma_seviye=0.0015, kayma_zaman=0.0005,
+                 max_saat=96.0, rsi_mum=100):
+        self.ayar, self.kayma_seviye, self.kayma_zaman = ayar, kayma_seviye, kayma_zaman
+        self.max_saat, self.rsi_mum = max_saat, rsi_mum
+
+    def simule_et(self, giris: float, giris_ms: int, atr_pct: float, is_whale: bool, m1, m15,
+                  rejim_at: Callable[[int], str]) -> Optional[SimSonucu]:
+        """m1: 1m mumlar (ts artan, giriş dakikasını içeren). m15: 15m mumlar (girişten >= rsi_mum önce başlayan).
+        Giriş dakikasının açılış/tepe/dibi kısmen giriş ÖNCESİNE ait olduğundan o mumdan yalnız kapanış kullanılır."""
+        a = self.ayar
+        p = risk.Pozisyon(sembol='', giris=float(giris), giris_zamani=giris_ms / 1000.0,
+                          atr_pct=float(atr_pct), is_whale=bool(is_whale))
+        m15 = np.asarray(m15, dtype=float).reshape(-1, 6)
+        m15_kapanis = m15[:, 0] + MUM_15M_MS
+        bacaklar, kalan = [], [1.0]
+        # RSI son (canlı) fiyatta monoton artan: aynı kapalı mumlarla, eşiğin altında kaldığı bir fiyattan
+        # daha düşük fiyatta tekrar hesaplamaya gerek yok (sonuç birebir aynı, hesap ~10 kat az)
+        rsi_red = {'kova': None, 'max_fiyat': float('-inf')}
+
+        def kapali(t_ms):
+            return int(np.searchsorted(m15_kapanis, t_ms, side='right'))
+
+        def sat(t_ms, pay, fiyat, mesaj, kesisim):
+            kayma = self.kayma_seviye if kesisim else self.kayma_zaman
+            bacaklar.append((int(t_ms), pay, fiyat * (1 - kayma), mesaj))
+            kalan[0] -= pay
+
+        def degerlendir(fiyat, t_ms, kesisim=False):
+            """VIP döngüsünün bir turu (ai_bot._pozisyonu_isle). Pozisyon tamamen kapandıysa True."""
+            simdi = t_ms / 1000.0
+            sev = risk.seviyeleri_hesapla(p, fiyat, a)
+            p.max_kar = max(p.max_kar, sev.max_kar)
+            rsi_tetik = False
+            if risk.rsi_kontrolu_gerekli(p, sev, simdi, a):
+                n = kapali(t_ms)
+                if rsi_red['kova'] != n:
+                    rsi_red.update(kova=n, max_fiyat=float('-inf'))
+                if not (self.rsi_onbellek and fiyat <= rsi_red['max_fiyat']):
+                    r = rsi_son(m15[max(0, n - (self.rsi_mum - 1)):n, 4].tolist() + [fiyat])
+                    rsi_tetik = r is not None and r >= a.moon_bag_rsi
+                    if not rsi_tetik:
+                        rsi_red['max_fiyat'] = max(rsi_red['max_fiyat'], fiyat)
+                p.son_rsi_kontrol = simdi
+            for e in risk.kararlar(p, sev, simdi, rejim_at(t_ms), a, rsi_tetik):
+                if e.tip in (risk.MOON_BAG, risk.KISMI_KAR):
+                    sat(t_ms, kalan[0] * e.oran, fiyat, e.mesaj, kesisim)
+                    p.half_sold = True
+                    return False
+                if e.tip == risk.TAM_CIKIS:
+                    sat(t_ms, kalan[0], fiyat, e.mesaj, kesisim)
+                    return True
+                if e.tip == risk.ZAMAN_UZAT:
+                    p.zaman_ref = simdi
+                elif e.tip == risk.MOMENTUM_KONTROL:
+                    p.son_mom_kontrol = simdi
+                    n = kapali(t_ms)
+                    if risk.momentum_oldu_mu(m15[max(0, n - 19):n, 5].tolist()):
+                        sat(t_ms, kalan[0], fiyat, e.mesaj, kesisim)
+                        return True
+                return False
+            return False
+
+        def esik_fiyati(oran):
+            return p.giris * (1 + a.fee_rate) * (1 + oran) / (1 - a.fee_rate)
+
+        def dusen_bacak(fa, ta, fb, tb):
+            """fa -> fb (fb < fa) doğrusal düşüşte kısmi/stop eşiklerini tam kesişim fiyatında değerlendirir."""
+            cur = fa
+            while True:
+                sev = risk.seviyeleri_hesapla(p, cur, a)
+                esikler = [sev.cikis]
+                if sev.max_kar >= sev.ilk_esik and not p.half_sold:
+                    esikler.append(sev.kismi)
+                adaylar = [f for f in (esik_fiyati(x) for x in esikler) if fb < f < cur]
+                if not adaylar:
+                    return False
+                f = max(adaylar)
+                t = int(round(ta + (tb - ta) * (fa - f) / (fa - fb)))
+                cur = f * (1 - 1e-12)
+                if degerlendir(cur, t, kesisim=True):
+                    return True
+
+        sinir_ms = giris_ms + self.max_saat * SAAT_MS
+        son = None
+        for fiyat, t, surekli in self._noktalar(m1, giris_ms):
+            if t >= sinir_ms:
+                return self._bitir(p, bacaklar, kalan, son, 'SINIR')
+            if self.kesisim_ekle and surekli and fiyat < son[0] and dusen_bacak(son[0], son[1], fiyat, t):
+                return self._sonuc(p, bacaklar, 'KAPANDI')
+            if degerlendir(fiyat, t):
+                return self._sonuc(p, bacaklar, 'KAPANDI')
+            son = (fiyat, t)
+        return self._bitir(p, bacaklar, kalan, son, 'ACIK')
+
+    kesisim_ekle = True
+    rsi_onbellek = True
+
+    @staticmethod
+    def _noktalar(m1, giris_ms):
+        """(fiyat, t_ms, önceki noktadan sürekli bacak mı). Giriş dakikasından yalnız kapanış."""
+        for ts, o, h, l, c, _v in np.asarray(m1, dtype=float).reshape(-1, 6).tolist():
+            ts = int(ts)
+            if ts + DK_MS <= giris_ms:
+                continue
+            if ts < giris_ms:
+                yield c, max(ts + YOL_OFSET_MS[-1], giris_ms), False
+                continue
+            yol = (o, l, h, c) if c >= o else (o, h, l, c)
+            for j, (f, d) in enumerate(zip(yol, YOL_OFSET_MS)):
+                yield f, ts + d, j > 0
+
+    def _bitir(self, p, bacaklar, kalan, son, durum):
+        if son is None:
+            return None
+        if kalan[0] > 1e-12:
+            bacaklar.append((int(son[1]), kalan[0], son[0] * (1 - self.kayma_zaman), f'SIM_{durum}'))
+        return self._sonuc(p, bacaklar, durum)
+
+    def _sonuc(self, p, bacaklar, durum):
+        getiri = sum(pay * risk.net_oran(p.giris, dolum, self.ayar.fee_rate) for _, pay, dolum, _ in bacaklar)
+        return SimSonucu(float(getiri), bacaklar, durum, float(p.max_kar))
+
+
+def simule_parcali(motor: CikisMotoru, depo: MumDeposu, sym, giris, giris_ms, atr_pct, is_whale, m15, rejim_at,
+                   parca_dk=1000) -> Optional[SimSonucu]:
+    """1m veriyi parça parça indirir: pozisyonların çoğu ilk ~16 saatte kapanır."""
+    bas = giris_ms - 3 * DK_MS
+    hedef = int(giris_ms + motor.max_saat * SAAT_MS + DK_MS)
+    uzunluk = parca_dk * DK_MS
+    while True:
+        son = min(bas + uzunluk, hedef)
+        s = motor.simule_et(giris, giris_ms, atr_pct, is_whale, depo.getir(sym, '1m', bas, son), m15, rejim_at)
+        if s is None or s.durum != 'ACIK' or son >= hedef or son >= depo.simdi_ms - DK_MS:
+            return s
+        uzunluk += 3 * parca_dk * DK_MS
+
+
+# ------------------------------------------------------------------------------------------
+# Bütçe kısıtlı yeniden oynatma (botun giriş kurallarıyla)
+# ------------------------------------------------------------------------------------------
+def oynat(islemler: List[dict], butce: float, mod: str = 'sabit', oran: float = 0.20, kurallar: bool = True):
+    """islemler: {sembol, giris_ms, kasa_tipi, bacaklar: [(t_ms, pay, getiri)], son_mesaj} — sıralama önceliği
+    listedeki sıradır (aynı anda gelen sinyallerde radar sırası). Dönen: (işlemler, özsermaye eğrisi, atlanan,
+    dönem sonunda açık kalan sayısı)."""
+    olaylar = []
+    for i, x in enumerate(islemler):
+        g = int(x['giris_ms'])
+        olaylar.append((g, 1, i, -1))
+        for j, b in enumerate(x['bacaklar']):
+            olaylar.append((max(int(b[0]), g + 1), 0, i, j))
+    olaylar.sort()
+    nakit = float(butce)
+    acik, acik_sembol = {}, {}
+    cooldown, kara, stop_sayac = {}, {}, Counter()
+    atlanan, alinan, egri = Counter(), [], []
+
+    def ozsermaye():
+        return nakit + sum(b * k for b, k, _ in acik.values())
+
+    for t, tur, i, j in olaylar:
+        x = islemler[i]
+        s = x['sembol']
+        if tur == 1:
+            if kurallar:
+                if s in acik_sembol:
+                    atlanan['acik_pozisyon'] += 1
+                    continue
+                if t < cooldown.get(s, -1):
+                    atlanan['cooldown'] += 1
+                    continue
+                if t < kara.get(s, -1):
+                    atlanan['kara_liste'] += 1
+                    continue
+            balina = x['kasa_tipi'] == 'BALİNA'
+            if mod == 'sabit':
+                boyut = gs.SABIT_KASA['BALİNA' if balina else 'NORMAL']
+            else:
+                boyut = ozsermaye() * oran * (2 if balina else 1)
+            if boyut < gs.MIN_NOTIONAL or nakit < boyut * 1.01:
+                atlanan['bakiye'] += 1
+                continue
+            nakit -= boyut
+            acik[i] = [boyut, 1.0, 0.0]
+            acik_sembol[s] = i
+        elif i in acik:
+            boyut, kalan, kar = acik[i]
+            pay, getiri = x['bacaklar'][j][1], x['bacaklar'][j][2]
+            nakit += boyut * pay * (1 + getiri)
+            kar += boyut * pay * getiri
+            kalan -= pay
+            if j == len(x['bacaklar']) - 1 or kalan <= 1e-9:
+                del acik[i]
+                acik_sembol.pop(s, None)
+                cooldown[s] = t + COOLDOWN_MS
+                mesaj = x.get('son_mesaj') or ''
+                if 'STOP' in mesaj:
+                    stop_sayac[s] += 1
+                    if stop_sayac[s] >= 2:
+                        kara[s], stop_sayac[s] = t + KARA_LISTE_MS, 0
+                elif 'TREND' in mesaj:
+                    stop_sayac[s] = 0
+                alinan.append({'sembol': s, 'giris_ms': int(x['giris_ms']), 'cikis_ms': t, 'boyut': boyut,
+                               'kar': kar, 'getiri': kar / boyut})
+            else:
+                acik[i] = [boyut, kalan, kar]
+            egri.append((t, ozsermaye()))
+    df = pd.DataFrame(alinan, columns=['sembol', 'giris_ms', 'cikis_ms', 'boyut', 'kar', 'getiri'])
+    seri = pd.Series([v for _, v in egri], index=pd.to_datetime([t for t, _ in egri], unit='ms'), dtype=float)
+    return df, seri, atlanan, len(acik)
+
+
+def butce_ozeti(islemler, butce, mod, oran, bas_ms, bit_ms):
+    df, egri, atlanan, acik = oynat(islemler, butce, mod, oran)
+    son = float(egri.iloc[-1]) if len(egri) else float(butce)
+    ilk30 = float(df.loc[df['cikis_ms'] < bas_ms + 30 * GUN_MS, 'kar'].sum()) if len(df) else 0.0
+    if len(df):
+        gunluk = df.assign(g=pd.to_datetime(df['cikis_ms'], unit='ms').dt.floor('D')).groupby('g')['kar'].sum()
+        gunler = pd.date_range(pd.to_datetime(bas_ms, unit='ms').floor('D'),
+                               pd.to_datetime(max(bit_ms, int(df['cikis_ms'].max())), unit='ms').floor('D'), freq='D')
+        p30 = gunluk.reindex(gunler, fill_value=0.0).rolling(30).sum().dropna()
+        aylik = df.assign(ay=pd.to_datetime(df['cikis_ms'], unit='ms').dt.strftime('%Y-%m')).groupby('ay').agg(
+            islem=('kar', 'size'), kar_usdt=('kar', 'sum'), kazanma=('kar', lambda s: float((s > 0).mean())))
+    else:
+        p30, aylik = pd.Series(dtype=float), pd.DataFrame()
+    return {'butce': butce, 'mod': mod, 'islem': int(len(df)), 'atlanan': dict(atlanan), 'acik_kalan': acik,
+            'toplam_kar': son - butce, 'getiri_pct': (son / butce - 1) * 100,
+            'max_dusus_pct': gs.max_dusus(egri, butce) * 100 if len(egri) else 0.0,
+            'ilk_30_gun_kar': ilk30,
+            'p30_medyan': float(p30.median()) if len(p30) else None,
+            'p30_p10': float(p30.quantile(0.1)) if len(p30) else None,
+            'p30_p90': float(p30.quantile(0.9)) if len(p30) else None,
+            'aylik': {k: {kk: float(vv) for kk, vv in v.items()} for k, v in aylik.to_dict('index').items()}}
+
+
+# ------------------------------------------------------------------------------------------
+# AI
+# ------------------------------------------------------------------------------------------
+def ai_yukle(yol):
+    if not yol or yol == 'yok' or not os.path.exists(yol):
+        return None
+    from sniper.model_karti import ModelYuvasi
+    yuva = ModelYuvasi(yol, 'core', 0.65, 'min')
+    mesaj = yuva.yenile()
+    if not yuva.yuklu:
+        print(f"⚠️ AI modeli yüklenemedi, AI senaryosu atlanıyor: {mesaj}")
+        return None
+    return yuva
+
+
+def ai_skoru(yuva, kanonik: dict) -> Optional[float]:
+    """Botla aynı feature hattı (ozellik_matrisi); kanonik = CSV kolon adlarıyla satır."""
+    try:
+        return float(yuva.model.predict_proba(ozellik_matrisi(pd.DataFrame([kanonik]), yuva.featurelar))[0][1])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ------------------------------------------------------------------------------------------
+# Kaynak 1: gerçek girişler
+# ------------------------------------------------------------------------------------------
+def dosyalari_bul(verilen):
+    yollar = list(verilen) if verilen else sorted({p for d in VARSAYILAN_DESENLER
+                                                   for p in glob.glob(os.path.join(KOK, d))})
+    uygun = []
+    for y in yollar:
+        with open(y, 'rb') as f:
+            if f.read(64).lstrip().startswith(b'{'):
+                print(f"⚠️ {os.path.basename(y)} CSV değil (JSON içeriyor), atlandı")
+                continue
+        uygun.append(y)
+    return uygun
+
+
+def giris_bul(depo: MumDeposu, sym, tahmini_ms, fiyat, tol=0.001, max_uzatma=3):
+    """Gerçek giriş anını dolum fiyatından doğrular. Dönen (giris_ms, uzatma_k, saat_farki) veya None.
+    k: eski sürümün süre uzatmasında sıfırladığı giriş zamanı için geri kaydırma (k x 4 saat)."""
+    denemeler = [(k, 0) for k in range(max_uzatma + 1)] + [(0, h) for h in (-3, 3, -2, 2, -1, 1)]
+    for k, h in denemeler:
+        t = tahmini_ms - k * UZATMA_MS + h * SAAT_MS
+        m = depo.getir(sym, '1m', t - 3 * DK_MS, t + 2 * DK_MS)
+        if len(m) and np.any((m[:, 3] * (1 - tol) <= fiyat) & (fiyat <= m[:, 2] * (1 + tol))):
+            return t, k, h
+    return None
+
+
+def cikis_ailesi(mesaj: str) -> str:
+    m = str(mesaj or '')
+    for anahtar, aile in [('STOP', 'STOP'), ('TREND', 'TREND'), ('KISMİ', 'KISMI'), ('MOON', 'MOON'),
+                          ('ZAMAN', 'ZAMAN'), ('KİLİDİ', 'KILIT'), ('BAŞA BAŞ', 'KILIT'), ('GÜVENLİ', 'KILIT'),
+                          ('MOMENTUM', 'MOMENTUM'), ('SIM_', 'SIM_SON')]:
+        if anahtar in m:
+            return aile
+    return 'DIGER'
+
+
+def gercek_kaynak(depo, btc: BtcBaglami, poz: pd.DataFrame, motorlar: Dict[str, CikisMotoru], yuva, log=print):
+    satirlar = []
+    for n, (_, r) in enumerate(poz.iterrows(), 1):
+        sym, fiyat, tahmini = r['sembol'], float(r['giris_fiyat']), _ms(r['giris'])
+        k = {'sembol': sym, 'giris_csv': str(r['giris']), 'kasa_tipi': r['kasa_tipi'], 'atr_pct': float(r['atr_pct']),
+             'rsi': float(r['rsi']), 'vol_oran': float(r['vol_oran']), 'giris_fiyat': fiyat,
+             'gercek_getiri': float(r['getiri']), 'gercek_cikislar': r['cikislar'], 'veri': 'VAR',
+             '_gercek_bacaklar': [(_ms(t), pay, g, mesaj) for t, pay, g, mesaj in r['bacaklar']]}
+        try:
+            bulunan = giris_bul(depo, sym, tahmini, fiyat)
+            giris_ms, uz, fark = bulunan if bulunan else (tahmini, None, None)
+            k.update(giris_ms=giris_ms, giris=_tarih(giris_ms), uzatma_k=uz, saat_farki=fark,
+                     giris_dogrulandi=bulunan is not None)
+            m15 = depo.getir(sym, '15m', giris_ms - 101 * MUM_15M_MS,
+                             giris_ms + max(m.max_saat for m in motorlar.values()) * SAAT_MS + MUM_15M_MS)
+            for ad, motor in motorlar.items():
+                s = simule_parcali(motor, depo, sym, fiyat, giris_ms, k['atr_pct'], r['kasa_tipi'] == 'BALİNA',
+                                   m15, btc.rejim_at)
+                if s is None:
+                    raise VeriYok(f"{sym} 1m verisi yok")
+                k.update({f'{ad}_getiri': s.getiri, f'{ad}_cikislar': s.cikislar, f'{ad}_durum': s.durum,
+                          f'{ad}_sure_saat': (s.cikis_ms - giris_ms) / SAAT_MS, f'_{ad}_bacaklar': s.bacaklar})
+        except VeriYok as e:
+            k['veri'] = f'YOK: {e}'
+            satirlar.append(k)
+            continue
+        d = btc.durum(giris_ms)
+        k['btc_ok'], k['rejim'], k['btc_adx'] = d if d else (None, None, None)
+        k['ai_skor'] = ai_skoru(yuva, {'Giris_RSI': k['rsi'], 'Giris_Vol_Oran': k['vol_oran'],
+                                       'Giris_ATR_Pct': k['atr_pct'], 'Sinyal': r['sinyal']}) if yuva else None
+        satirlar.append(k)
+        if n % 25 == 0 or n == len(poz):
+            log(f"  {n}/{len(poz)} pozisyon simüle edildi ({depo.istek} API isteği)")
+    return pd.DataFrame(satirlar)
+
+
+def gercek_senaryolari(tablo: pd.DataFrame, yuva) -> Dict[str, List[dict]]:
+    """Karşılaştırılabilirlik için tüm senaryolar fiyat verisi olan AYNI pozisyon kümesinden türetilir."""
+    t = tablo[tablo['veri'] == 'VAR'].sort_values('giris_ms')
+    sen = {ad: [] for ad in ['GERCEK', 'ESKI_SIM', 'V184_CIKIS', 'V184', 'V184_AI']}
+    for _, r in t.iterrows():
+        ortak = {'sembol': r['sembol'], 'giris_ms': int(r['giris_ms']), 'kasa_tipi': r['kasa_tipi']}
+        g = r['_gercek_bacaklar']
+        kaydir = int(r['saat_farki'] or 0) * SAAT_MS if pd.notna(r['saat_farki']) else 0   # CSV saat dilimi farkı
+        sen['GERCEK'].append({**ortak, 'bacaklar': [(b[0] + kaydir, b[1], b[2]) for b in g], 'son_mesaj': g[-1][3]})
+        for ad in ('ESKI_SIM', 'V184'):
+            b = r[f'_{ad}_bacaklar']
+            islem = {**ortak, 'bacaklar': [(x[0], x[1], risk.net_oran(r['giris_fiyat'], x[2], RISK_V184.fee_rate))
+                                           for x in b], 'son_mesaj': b[-1][3]}
+            if ad == 'ESKI_SIM':
+                sen['ESKI_SIM'].append(islem)
+                continue
+            sen['V184_CIKIS'].append(islem)
+            if r['btc_ok'] and r['rejim'] == 'TREND' and r['atr_pct'] <= MAX_ATR_V184:
+                sen['V184'].append(islem)
+                if yuva is not None and pd.notna(r['ai_skor']) and not yuva.blokla_mi(float(r['ai_skor'])):
+                    sen['V184_AI'].append(islem)
+    if yuva is None:
+        sen.pop('V184_AI')
+    return sen
+
+
+# ------------------------------------------------------------------------------------------
+# Kaynak 2: backfill sinyalleri
+# ------------------------------------------------------------------------------------------
+def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: CikisMotoru, yuva,
+                    semboller=None, log=print):
+    semboller = semboller or bf.evren_sec(ex, evren_n)
+    veri_bas = bas_ms - bf.ISINMA_MUM * MUM_15M_MS
+    seriler15 = {}
+    for n, s in enumerate(semboller, 1):
+        try:
+            seriler15[s] = depo.getir_df(s, '15m', veri_bas, bit_ms + int(motor.max_saat * SAAT_MS) + MUM_15M_MS)
+        except VeriYok:
+            continue
+        if n % 50 == 0:
+            log(f"  15m veri: {n}/{len(semboller)} sembol ({depo.istek} API isteği)")
+    seriler15 = {s: d for s, d in seriler15.items() if len(d) > bf.PENCERE_15M}
+    ilk_n, genislik = bf.radar_paneli({s: d[d['ts'] < bit_ms] for s, d in seriler15.items()})
+    ayar = SinyalAyarlari(max_atr_pct=MAX_ATR_V184 / 100)
+    sinyaller = []
+    for s, df15 in seriler15.items():
+        df15_sinyal = df15[df15['ts'] + MUM_15M_MS <= bit_ms].reset_index(drop=True)
+        try:
+            df1h = depo.getir_df(s, '1h', veri_bas - bf.PENCERE_1H * SAAT_MS, bit_ms + SAAT_MS)
+        except VeriYok:
+            continue
+        for x in bf.sinyalleri_uret(s, df15_sinyal, df1h, btc.df, ilk_n, genislik, bas_ms, False, ayar):
+            i = x.pop('_i')
+            x['degisim_24s'] = float(df15_sinyal['c'].iloc[i] / df15_sinyal['c'].iloc[i - 96] - 1) if i >= 96 else 0.0
+            sinyaller.append(x)
+    log(f"  {len(sinyaller)} sinyal üretildi ({sum(x['Rejim'] == 'TREND' for x in sinyaller)} TREND rejiminde); "
+        f"çıkışlar simüle ediliyor...")
+    satirlar = []
+    for n, x in enumerate(sorted(sinyaller, key=lambda z: (z['Ts'], -z['degisim_24s'])), 1):
+        sym, ts = x['Sembol'], int(x['Ts'])
+        giris = float(x['Fiyat']) * (1 + ALIM_KAYMASI)
+        balina = depo_etiket.is_whale_tahmini(x)
+        d15 = seriler15[sym]
+        m15 = d15[(d15['ts'] >= ts - 101 * MUM_15M_MS)].to_numpy(dtype=float)
+        try:
+            s = simule_parcali(motor, depo, sym, giris, ts, depo_etiket.sayi(x.get('Giris_ATR_Pct'), 2.5), balina,
+                               m15, btc.rejim_at)
+        except VeriYok:
+            s = None
+        if s is None:
+            continue
+        satirlar.append({'sembol': sym, 'giris_ms': ts, 'giris': _tarih(ts), 'giris_fiyat': giris,
+                         'kasa_tipi': 'BALİNA' if balina else 'NORMAL', 'rejim': x['Rejim'],
+                         'atr_pct': x.get('Giris_ATR_Pct'), 'rsi': x.get('Giris_RSI'), 'vol_oran': x.get('Giris_Vol_Oran'),
+                         'degisim_24s': x['degisim_24s'],
+                         'ai_skor': ai_skoru(yuva, {k: x.get(k) for k in x}) if yuva else None,
+                         'V184_getiri': s.getiri, 'V184_cikislar': s.cikislar, 'V184_durum': s.durum,
+                         'V184_sure_saat': (s.cikis_ms - ts) / SAAT_MS, '_V184_bacaklar': s.bacaklar})
+        if n % 200 == 0:
+            log(f"  {n}/{len(sinyaller)} sinyal ({depo.istek} API isteği)")
+    return pd.DataFrame(satirlar)
+
+
+def backfill_senaryolari(tablo: pd.DataFrame, yuva) -> Dict[str, List[dict]]:
+    sen = {'B_V184': [], 'B_REJIMSIZ': [], 'B_V184_AI': []}
+    if tablo.empty:
+        return sen
+    for _, r in tablo.sort_values(['giris_ms', 'degisim_24s'], ascending=[True, False]).iterrows():
+        b = r['_V184_bacaklar']
+        islem = {'sembol': r['sembol'], 'giris_ms': int(r['giris_ms']), 'kasa_tipi': r['kasa_tipi'],
+                 'bacaklar': [(x[0], x[1], risk.net_oran(r['giris_fiyat'], x[2], RISK_V184.fee_rate)) for x in b],
+                 'son_mesaj': b[-1][3]}
+        sen['B_REJIMSIZ'].append(islem)
+        if r['rejim'] == 'TREND':
+            sen['B_V184'].append(islem)
+            if yuva is not None and pd.notna(r['ai_skor']) and not yuva.blokla_mi(float(r['ai_skor'])):
+                sen['B_V184_AI'].append(islem)
+    if yuva is None:
+        sen.pop('B_V184_AI')
+    return sen
+
+
+# ------------------------------------------------------------------------------------------
+# Rapor
+# ------------------------------------------------------------------------------------------
+def _pct(x):
+    return 'yok' if x is None or (isinstance(x, float) and np.isnan(x)) else f"%{x * 100:+.2f}"
+
+
+def _bootstrap_ga(fark, n=4000, tohum=0):
+    fark = np.asarray(fark, dtype=float)
+    if len(fark) < 5:
+        return None, None
+    rng = np.random.default_rng(tohum)
+    ort = rng.choice(fark, size=(n, len(fark)), replace=True).mean(axis=1)
+    return float(np.quantile(ort, 0.025)), float(np.quantile(ort, 0.975))
+
+
+def dogrulama_ozeti(tablo: pd.DataFrame) -> dict:
+    t = tablo[(tablo['veri'] == 'VAR') & (tablo['giris_dogrulandi'].astype(bool))
+              & (pd.to_datetime(tablo['giris_ms'], unit='ms') < pd.Timestamp(ESKI_SURUM_BITIS))]
+    if t.empty:
+        return {}
+    g, s = t['gercek_getiri'].to_numpy(), t['ESKI_SIM_getiri'].to_numpy()
+    ga = t['gercek_cikislar'].str.split(' + ', regex=False).str[-1].map(cikis_ailesi)
+    sa = t['ESKI_SIM_cikislar'].str.split(' + ', regex=False).str[-1].map(cikis_ailesi)
+    aile = pd.DataFrame({'aile': ga, 'fark': s - g}).groupby('aile')['fark'].agg(['size', 'mean'])
+    return {'n': int(len(t)), 'gercek_ort': float(g.mean()), 'sim_ort': float(s.mean()),
+            'mutlak_fark_ort': float(np.abs(s - g).mean()),
+            'korelasyon': float(np.corrcoef(g, s)[0, 1]) if len(t) > 2 else None,
+            'cikis_ailesi_uyumu': float((ga.to_numpy() == sa.to_numpy()).mean()),
+            'aileye_gore_sapma': {k: {'n': int(v['size']), 'ort_fark': float(v['mean'])} for k, v in aile.iterrows()}}
+
+
+def filtre_ozeti(tablo: pd.DataFrame, yuva) -> dict:
+    t = tablo[tablo['veri'] == 'VAR']
+    if t.empty:
+        return {}
+    kosullar = {'btc_onayi_yok': t['btc_ok'] != True, 'yatay_rejim': t['rejim'] != 'TREND',  # noqa: E712
+                'atr_3_ustu': t['atr_pct'] > MAX_ATR_V184}
+    if yuva is not None:
+        kosullar['ai_veto'] = t['ai_skor'].map(lambda x: bool(pd.isna(x) or yuva.blokla_mi(float(x))))
+    sonuc = {}
+    for ad, m in kosullar.items():
+        m = m.astype(bool)
+        sonuc[ad] = {'engellenen': int(m.sum()), 'engellenenin_gercek_ort': float(t.loc[m, 'gercek_getiri'].mean())
+                     if m.any() else None, 'gecenin_gercek_ort': float(t.loc[~m, 'gercek_getiri'].mean()) if (~m).any() else None}
+    return sonuc
+
+
+def cikis_etkisi(tablo: pd.DataFrame) -> dict:
+    t = tablo[tablo['veri'] == 'VAR']
+    if t.empty:
+        return {}
+    sonuc = {}
+    donemler = [('tum', None, None), ('05Ağu-15Eyl', '2026-08-05', '2026-09-16'), ('16Eyl-20Eyl', '2026-09-16', '2026-09-21'),
+                ('21Eyl+', '2026-09-21', None)]
+    zaman = pd.to_datetime(t['giris_ms'], unit='ms')
+    for ad, a, b in donemler:
+        m = pd.Series(True, index=t.index)
+        if a:
+            m &= zaman >= pd.Timestamp(a)
+        if b:
+            m &= zaman < pd.Timestamp(b)
+        x = t[m]
+        if len(x) < 3:
+            continue
+        fark = (x['V184_getiri'] - x['gercek_getiri']).to_numpy()
+        alt, ust = _bootstrap_ga(fark)
+        sonuc[ad] = {'n': int(len(x)), 'gercek_ort': float(x['gercek_getiri'].mean()),
+                     'eski_sim_ort': float(x['ESKI_SIM_getiri'].mean()), 'v184_ort': float(x['V184_getiri'].mean()),
+                     'v184_eski_sim_farki': float((x['V184_getiri'] - x['ESKI_SIM_getiri']).mean()),
+                     'fark_ga95': [alt, ust]}
+    return sonuc
+
+
+def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu) -> str:
+    y = [f"V18.4 GEÇMİŞ SİMÜLASYONU | {meta['baslangic']} → {meta['bitis']} | {meta['olusturma']}",
+         f"Ayarlar: kayma seviye %{meta['kayma_seviye'] * 100:.2f} / zaman %{meta['kayma_zaman'] * 100:.2f} | "
+         f"max süre {meta['max_saat']:.0f} saat | AI: {meta['ai'] or 'yok'} | API isteği: {meta['istek']}"]
+    if 'gercek' in meta:
+        g = meta['gercek']
+        y += ['', f"GERÇEK GİRİŞLER: {g['pozisyon']} pozisyon | fiyat verisi yok: {g['veri_yok']} | giriş zamanı "
+                  f"doğrulanan: {g['dogrulanan']} (süre uzatması düzeltilen: {g['uzatma_duzeltilen']}, saat farkı "
+                  f"düzeltilen: {g['saat_farki_duzeltilen']}) | doğrulanamayan: {g['dogrulanamayan']}"]
+    if dogrulama:
+        d = dogrulama
+        y += ['', f"1) SİMÜLATÖR DOĞRULAMASI — {ESKI_SURUM_BITIS} öncesi (Ağustos sürümü) girişler: aynı ayarlarla "
+                  f"simülasyon vs gerçekleşen",
+              f"   n={d['n']} | ort. net getiri: gerçek {_pct(d['gercek_ort'])}, simülasyon {_pct(d['sim_ort'])} | "
+              f"pozisyon başına ort. mutlak fark {_pct(d['mutlak_fark_ort'])} | korelasyon "
+              f"{(d['korelasyon'] if d['korelasyon'] is not None else float('nan')):.2f} | "
+              f"son çıkış tipi uyumu %{d['cikis_ailesi_uyumu'] * 100:.0f}",
+              "   gerçek çıkış tipine göre ort. sapma (sim - gerçek): " +
+              ', '.join(f"{k} {_pct(v['ort_fark'])} (n={v['n']})" for k, v in d['aileye_gore_sapma'].items())]
+    if filtreler:
+        y += ['', "2) V18.4 GİRİŞ FİLTRELERİ gerçek girişlere uygulansaydı (engellenenlerin GERÇEKLEŞEN ort. getirisi)"]
+        for ad, v in filtreler.items():
+            y.append(f"   {ad:14s}: {v['engellenen']:4d} engellenirdi | engellenen ort {_pct(v['engellenenin_gercek_ort'])}"
+                     f" | geçen ort {_pct(v['gecenin_gercek_ort'])}")
+    if etki:
+        y += ['', "3) ÇIKIŞ MANTIĞI (aynı girişler): gerçekleşen vs Ağustos-sim vs V18.4-sim, pozisyon başına ort. net getiri"]
+        for ad, v in etki.items():
+            ga = v['fark_ga95']
+            ga_txt = f"[{_pct(ga[0])}, {_pct(ga[1])}]" if ga[0] is not None else ''
+            y.append(f"   {ad:12s} n={v['n']:3d} | gerçek {_pct(v['gercek_ort'])} | Ağustos-sim {_pct(v['eski_sim_ort'])} | "
+                     f"V18.4-sim {_pct(v['v184_ort'])} | V18.4 - Ağustos-sim {_pct(v['v184_eski_sim_farki'])} | "
+                     f"V18.4 - gerçek %95 GA {ga_txt}")
+    y += ['', "4) BÜTÇE SONUÇLARI (botun kurallarıyla; 'ilk 30 gün' = başlangıçtan itibaren 30 günde kapanan işlemler)",
+          f"   {'senaryo':11s} {'bütçe':>5s} {'mod':8s} {'işlem':>5s} {'atlanan':>7s} {'toplam':>8s} {'getiri':>7s} "
+          f"{'maxDD':>6s} {'ilk30g':>7s} {'30g medyan':>10s} {'30g %10':>8s} {'30g %90':>8s}"]
+    for r in butce_tablosu:
+        f = (lambda v: f"{v:+.2f}" if v is not None else '  -')
+        y.append(f"   {r['senaryo']:11s} {r['butce']:5.0f} {r['mod']:8s} {r['islem']:5d} {sum(r['atlanan'].values()):7d} "
+                 f"{r['toplam_kar']:+8.2f} {r['getiri_pct']:+6.1f}% {r['max_dusus_pct']:5.1f}% {r['ilk_30_gun_kar']:+7.2f} "
+                 f"{f(r['p30_medyan']):>10s} {f(r['p30_p10']):>8s} {f(r['p30_p90']):>8s}")
+    y += ['', 'Senaryolar: ' + ' | '.join(f"{k}: {v}" for k, v in SENARYO_ACIKLAMA.items()
+                                          if any(r['senaryo'] == k for r in butce_tablosu))]
+    return '\n'.join(y)
+
+
+# ------------------------------------------------------------------------------------------
+def calistir(ex, a, simdi_ms=None, log=print):
+    simdi_ms = int(simdi_ms if simdi_ms is not None else time.time() * 1000)
+    bas_ms = _ms(a.baslangic)
+    bit_ms = min(_ms(a.bitis), simdi_ms) if a.bitis else simdi_ms
+    depo = MumDeposu(ex, a.onbellek, simdi_ms=simdi_ms)
+    yuva = ai_yukle(a.ai_model)
+    ortak = dict(kayma_seviye=a.kayma_seviye, kayma_zaman=a.kayma_zaman, max_saat=a.max_saat)
+    motor_v184 = CikisMotoru(RISK_V184, rsi_mum=100, **ortak)
+    motorlar = {'ESKI_SIM': CikisMotoru(RISK_ESKI, rsi_mum=25, **ortak), 'V184': motor_v184}
+
+    log(f"BTC 15m verisi indiriliyor ve rejim hesaplanıyor ({_tarih(bas_ms)} → {_tarih(bit_ms)})...")
+    btc = BtcBaglami(depo.getir_df('BTC/USDT', '15m', bas_ms - (bf.PENCERE_BTC + bf.ISINMA_MUM) * MUM_15M_MS,
+                                   bit_ms + int(a.max_saat * SAAT_MS) + MUM_15M_MS))
+    meta = {'baslangic': _tarih(bas_ms), 'bitis': _tarih(bit_ms), 'olusturma': _tarih(simdi_ms),
+            'kayma_seviye': a.kayma_seviye, 'kayma_zaman': a.kayma_zaman, 'max_saat': a.max_saat,
+            'ai': (f"{os.path.basename(a.ai_model)} (eşik {yuva.esik:.2f})" if yuva else None)}
+    senaryolar, dogrulama, filtreler, etki = {}, {}, {}, {}
+    yazilacak = []
+
+    if 'gercek' in a.kaynak:
+        dosyalar = dosyalari_bul(a.dosyalar)
+        if not dosyalar:
+            raise SystemExit("İşlem CSV dosyası bulunamadı.")
+        df = gs.oku(dosyalar)
+        ana, _yab, _sah, tem = gs.temizle(df)
+        poz = gs.pozisyonlar(ana)
+        poz = poz[(poz['giris'] >= pd.Timestamp(a.baslangic))]
+        if a.bitis:
+            poz = poz[poz['giris'] < pd.Timestamp(a.bitis)]
+        poz = poz.reset_index(drop=True)
+        if a.limit:
+            poz = poz.head(a.limit)
+        log(f"Gerçek girişler: {len(poz)} pozisyon ({', '.join(os.path.basename(d) for d in dosyalar)}); "
+            f"ayıklanan: başka bot {tem['yabanci_satir']}, sahiplenilmiş {tem['sahipsiz_satir']} satır")
+        tablo = gercek_kaynak(depo, btc, poz, motorlar, yuva, log)
+        if tablo.empty:
+            raise SystemExit("Seçilen tarih aralığında pozisyon yok.")
+        var = tablo[tablo['veri'] == 'VAR']
+        dogru = var['giris_dogrulandi'].astype(bool) if len(var) else pd.Series(dtype=bool)
+        meta['gercek'] = {'pozisyon': int(len(tablo)), 'veri_yok': int((tablo['veri'] != 'VAR').sum()),
+                          'dogrulanan': int(dogru.sum()),
+                          'uzatma_duzeltilen': int((pd.to_numeric(var.get('uzatma_k'), errors='coerce').fillna(0) > 0).sum())
+                          if len(var) else 0,
+                          'saat_farki_duzeltilen': int((pd.to_numeric(var.get('saat_farki'), errors='coerce').fillna(0) != 0).sum())
+                          if len(var) else 0,
+                          'dogrulanamayan': int((~dogru).sum())}
+        senaryolar.update(gercek_senaryolari(tablo, yuva))
+        dogrulama, filtreler, etki = dogrulama_ozeti(var), filtre_ozeti(tablo, yuva), cikis_etkisi(var)
+        yazilacak.append((tablo, a.cikti + '_pozisyonlar.csv'))
+
+    if 'backfill' in a.kaynak:
+        log(f"Backfill: evren seçiliyor (en hacimli {a.evren} USDT paritesi) ve sinyaller üretiliyor...")
+        try:
+            btablo = backfill_kaynak(depo, ex, btc, bas_ms, bit_ms, a.evren, motor_v184, yuva, log=log)
+            senaryolar.update(backfill_senaryolari(btablo, yuva))
+            yazilacak.append((btablo, a.cikti + '_backfill.csv'))
+        except Exception as e:  # noqa: BLE001 - gerçek kaynak raporu yine yazılsın
+            log(f"⚠️ Backfill çalışmadı: {type(e).__name__}: {e}")
+
+    meta['istek'] = depo.istek
+    butce_tablosu = []
+    for ad, islemler in senaryolar.items():
+        for mod in a.mod:
+            for b in a.butce:
+                butce_tablosu.append({'senaryo': ad, **butce_ozeti(islemler, b, mod, a.oran, bas_ms, bit_ms)})
+    metin = rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu)
+    for tablo_, yol in yazilacak:
+        tablo_.drop(columns=[c for c in tablo_.columns if c.startswith('_')]).to_csv(yol, index=False)
+    with open(a.cikti + '_rapor.txt', 'w', encoding='utf-8') as f:
+        f.write(metin + '\n')
+    with open(a.cikti + '_rapor.json', 'w', encoding='utf-8') as f:
+        json.dump({'meta': meta, 'dogrulama': dogrulama, 'filtreler': filtreler, 'cikis_etkisi': etki,
+                   'butce': butce_tablosu}, f, ensure_ascii=False, indent=1, default=str)
+    log('\n' + metin)
+    log(f"\nÇıktılar: {a.cikti}_rapor.txt, {a.cikti}_rapor.json" + ''.join(f", {y}" for _, y in yazilacak))
+    return {'meta': meta, 'dogrulama': dogrulama, 'filtreler': filtreler, 'cikis_etkisi': etki,
+            'butce': butce_tablosu, 'senaryolar': senaryolar}
+
+
+def arguman_ayristirici():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('dosyalar', nargs='*', help='işlem CSV\'leri (varsayılan: bot klasöründeki core_islem_verileri*.csv '
+                                                've *.onarildi.csv)')
+    ap.add_argument('--baslangic', default='2026-08-05', help='bu tarihten itibaren açılan pozisyonlar / sinyaller')
+    ap.add_argument('--bitis', default=None, help='bu tarihten ÖNCE açılanlar (varsayılan: bugün)')
+    ap.add_argument('--kaynak', nargs='+', choices=['gercek', 'backfill'], default=['gercek', 'backfill'])
+    ap.add_argument('--butce', type=float, nargs='+', default=[100.0, 450.0])
+    ap.add_argument('--mod', nargs='+', choices=['sabit', 'oransal'], default=['sabit', 'oransal'])
+    ap.add_argument('--oran', type=float, default=0.20, help='oransal mod: işlem başına özsermaye payı')
+    ap.add_argument('--ai-model', default=os.path.join(KOK, 'core_xgboost_model.json'), help="'yok': AI senaryosu yok")
+    ap.add_argument('--evren', type=int, default=250, help='backfill: en hacimli N USDT paritesi')
+    ap.add_argument('--max-saat', type=float, default=96.0, help='pozisyon bu süreden sonra son fiyattan kapatılır')
+    ap.add_argument('--kayma-seviye', type=float, default=0.0015)
+    ap.add_argument('--kayma-zaman', type=float, default=0.0005)
+    ap.add_argument('--onbellek', default=os.path.join(KOK, 'sim_onbellek'))
+    ap.add_argument('--cikti', default=os.path.join(KOK, 'v184_sim'))
+    ap.add_argument('--limit', type=int, default=None, help='hızlı deneme: ilk N gerçek pozisyon')
+    return ap
+
+
+def main(argv=None):
+    a = arguman_ayristirici().parse_args(argv)
+    import ccxt
+    ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
+    ex.rateLimit = max(ex.rateLimit or 0, 100)   # botla aynı IP limiti paylaşılıyor: yavaş ve güvenli
+    try:
+        calistir(ex, a)
+    except (ccxt.NetworkError, ccxt.ExchangeNotAvailable, ccxt.AuthenticationError, VeriYok) as e:
+        print(f"\n❌ Binance fiyat verisine erişilemedi: {type(e).__name__}: {str(e)[:300]}\n"
+              f"   Bu makineden api.binance.com erişimi var mı? (Bot sunucusunda çalıştırın.) "
+              f"İndirilen veri {a.onbellek} içinde saklandı; tekrar çalıştırınca kaldığı yerden devam eder.")
+        return 2
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

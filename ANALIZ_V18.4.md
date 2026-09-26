@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3); bu ortamdan Binance'e erişim olmadığı için sunucuda çalıştırılmalı.
 
 ---
 
@@ -308,3 +308,67 @@ Review ayrıca şunları doğruladı: `risk_motoru` ile V18.3 arasında belgelen
 - **Sabit kasa ile bütçe kârı büyütmez:** 450 USDT'nin zaman ağırlıklı ortalama ~10 USDT'si kullanılıyor, zamanın %72'sinde hiç açık pozisyon yok. 100 USDT'de ise bot bakiye kontrolündeki %1 pay yüzünden aynı anda en fazla 4 pozisyon açabildi ve 35 işlemi atladı.
 - V18.3'ün ATR<%3 giriş filtresi geçmişe uygulansaydı sonuç +5.76 → −0.97 USDT olurdu. Elenen 57 yüksek ATR'li işlem net kârlıydı; örnek küçük, kesin sonuç değil.
 - **Sınırlar:** işlemler bot sürüm sürüm değişirken yapıldı (V16 → V18.3). Rejim filtresi (17 Eylül'den beri) ve AI bloklamasının geçmiş etkisi bu veriyle ölçülemez; eski modeller bu verinin üzerinde eğitildiği için onları geçmişe uygulamak iyimser olur. V18.4 mantığının geçmiş fiyat verisiyle backtest'i için backfill sinyalleri + `sniper/risk_motoru` kullanılarak sunucuda bir backtest yazılabilir. Geçmiş performans geleceği garanti etmez.
+
+### 10.1 5 / 7 Ağustos başlangıçlı yeniden oynatma
+**Bu sonuçlar V18.3 ya da V18.4'ün değil, o tarihlerde çalışan sürümün gerçekleşen sonucudur.** CSV'deki çıkış tipleri sürüm sınırlarını gösteriyor: "🛡️ BAŞA BAŞ KORUMASI" (kâr kilidi +%0.2) son kez 20 Eylül'de, V18.3'ün "🔒 KÂR KİLİDİ (+%1)" ve "💤 MOMENTUM ÖLDÜ" çıkışları ilk kez 21–22 Eylül'de görülüyor.
+
+| Dönem | Çalışan mantık | Pozisyon | İşlem günü | Ort. net | Kazanma | 20 USDT ile toplam |
+|---|---|---|---|---|---|---|
+| 5–15 Ağu | Ağustos sürümü (kilit +%0.2, ATR<%4, rejim filtresi yok) | 47 | 9 | +%0.70 | %49 | +6.60 |
+| 16–31 Ağu | aynı | 145 | 15 | +%0.53 | %51 | +15.27 |
+| 1–15 Eyl (7–15 Eylül'de işlem yok) | aynı | 47 | 5 | +%1.11 | %64 | +10.41 |
+| 16–20 Eyl | yeni CSV şeması, çıkışlar hâlâ eski | 40 | 5 | −%0.24 | %50 | −1.89 |
+| 21–25 Eyl | V18.3 (kilit +%1, momentum çıkışı, ATR<%3) | 33 | 4 | −%0.47 | %39 | −3.12 |
+
+**Bütçe kısıtlı sonuç** (sabit kasa 20/40 USDT; oransal = işlem başına özsermayenin %20'si):
+
+| Başlangıç → bitiş | Pozisyon | 100 USDT sabit | 450 USDT sabit | Oransal (her iki bütçe) | En büyük düşüş |
+|---|---|---|---|---|---|
+| 5 Ağu → 4 Eyl (30 gün) | 205 | +26.6 USDT (%+26.6) | +26.2 USDT (%+5.8) | %+27.0 (100→+27.1, 450→+121.7) | −%6.0 / −%1.6 / −%6.9 |
+| 7 Ağu → 6 Eyl (30 gün) | 217 | +32.7 USDT (%+32.6) | +32.3 USDT (%+7.2) | %+34.9 (100→+34.9, 450→+157.2) | −%6.1 / −%1.6 / −%6.9 |
+| 5 Ağu → 25 Eyl (tümü) | 312 | +27.6 USDT (%+27.6) | +27.2 USDT (%+6.0) | %+28.1 (100→+28.1, 450→+126.3) | −%6.0 / −%1.6 / −%6.9 |
+
+**Başlangıç gününe duyarlılık** (100 USDT sabit, 30 günlük giriş penceresi): 1 Ağu +21.9 · 5 Ağu +26.6 · 7 Ağu +32.7 · 10 Ağu +23.9 · 15 Ağu +23.0 · 20 Ağu +17.3 · 24 Ağu +8.3 · 26 Ağu +7.6 USDT. Pencere kaydıkça 16–25 Eylül zararı ve 7–15 Eylül boşluğu içeri girdiği için sonuç düşüyor.
+
+**Yorum:**
+- Ağustos, 4 aylık geçmişin tek güçlü ayı (Haziran–Temmuz zararda, §10). 5/7 Ağustos başlangıcı sonucu gördükten sonra seçildiği için bu rakamlar **en iyi durum senaryosudur**, beklenti değil.
+- Sabit kasada bütçe kârı büyütmez: 100 ve 450 USDT neredeyse aynı dolar kârını üretir; 450 USDT'de paranın çoğu boşta bekler. Oransal kasada getiri yüzdesi aynı kalır, dolar kârı bütçeyle ölçeklenir, düşüş de.
+- 16–25 Eylül (yeni sürümler) zararda. Bu dönemin kısa (73 pozisyon, 9 gün) olduğunu ve piyasa koşullarının da değiştiğini unutmayın: giriş feature'ları bu dönemde belirgin farklı (hacim oranı ort. 2.85 vs ~3.2, ATR 1.68 vs ~1.4).
+
+### 10.2 V18.4 filtreleri gerçek girişlere uygulansaydı (fiyat verisi gerektirmeyenler)
+| Filtre | 5 Ağu – 15 Eyl (Ağustos sürümü) | 16–25 Eyl |
+|---|---|---|
+| ATR > %3 girişleri (V18.3+ bunlara girmez) | 25 pozisyon, **ort. +%1.74** (diğerleri +%0.55) | 5 pozisyon, ort. −%2.96 (3'ü −%5 stop) |
+| Core model vetosu (skor < 0.65) | **0 / 239 engellenirdi** | 48 / 73: geçen +%0.40, engellenen −%0.73 |
+| Filtre modeli (skor > 0.45) | 39 engellenirdi (−%1.83) — **ezber, geçersiz** | 17 engellenirdi (−%0.37), geçen −%0.33: fark yok |
+
+- **ATR<%3 filtresi** 5 Ağu → 4 Eyl penceresinde 100 USDT sabit kârı +26.6'dan **+17.9 USDT**'ye, oransal 450 USDT kârı +121.7'den **+74.7 USDT**'ye düşürürdü. Yüksek ATR'li 30 girişin ortalaması (+%0.96) diğerlerinden (+%0.38) iyi; fark anlamlı değil (permütasyon p=0.39). V18.3'teki bu değişiklik 18–20 Eylül'deki üç −%5 stoptan sonra yapılmıştı; daha uzun geçmiş onu desteklemiyor. Karar sizin: ATR'yi %4'e geri almak (`MAX_ATR_PCT = 0.04`) daha fazla ve daha oynak işlem demek.
+- **Core model:** Ağustos girişlerinin hiçbirini engellemezdi, yani Ağustos sonucuna etkisi yok. 16–25 Eylül içinde (zaman karışıklığı olmadan) engellediği işlemler daha kötü: tek yönlü permütasyon p=0.05, RSI dilimleri içinde p=0.12. Model büyük ölçüde "düşük RSI + düşük hacim oranı" girişlerini eliyor. Adli bulgu: modelin `base_score=0.45588` = 31/68, yani **ilk 68 işlemle (31 Mayıs – 15 Haziran) eğitilmiş**; Ağustos ve Eylül onun için örneklem dışı. Kanıt zayıf ama tutarlı; §2.3'teki öneri (bloklama açık, filtre modeli kaldırılsın) değişmiyor.
+- **Filtre modelinin** Ağustos'taki etkileyici ayrımı ezberdir: 15–16 Eylül'de Ağustos'u da içeren 603 satırla eğitildi (`base_score` = 196/603). Eğitimden sonraki 16–25 Eylül'de ayrımı sıfır. Simülasyonlarda kullanılmadı.
+- **Ölçülemeyenler:** rejim filtresi (BTC 15m ADX<20 iken giriş yok), BTC EMA200 histerezisi ve V18.4 çıkış mantığı (kâr kilidi +%1, momentum çıkışı, yarım satış sonrası taban düzeltmesi). Bunlar için fiyat verisi gerekiyor: §10.3.
+
+### 10.3 V18.4 simülatörü (`tools/v184_simulasyon.py`)
+Binance'ten 1 dakikalık fiyat geçmişini indirir ve V18.4'ün kararlarını canlı botun kullandığı kodun aynısıyla (`sniper/risk_motoru.py`) yeniden üretir.
+
+| Senaryo | Ne |
+|---|---|
+| `GERCEK` | o günkü sürümün gerçekleşen sonucu |
+| `ESKI_SIM` | aynı girişler, Ağustos sürümünün çıkış ayarlarıyla simülasyon. `GERCEK` ile farkı **simülatörün hata payıdır** |
+| `V184_CIKIS` | aynı girişler, V18.4 çıkış mantığı |
+| `V184` | + V18.4 giriş filtreleri: BTC onayı, TREND rejimi, ATR ≤ %3 |
+| `V184_AI` | + core model vetosu |
+| `B_V184`, `B_REJIMSIZ`, `B_V184_AI` | sinyaller geçmiş mumlardan V18.4 kuralıyla yeniden üretilir (kapalı mum modu, radar: 12M+ hacimli en çok yükselen 10 parite). "Bot baştan V18.4 olsaydı" sorusunun yaklaşık cevabı |
+
+Her senaryo 100/450 USDT ve sabit/oransal kasa için botun kurallarıyla oynatılır: aynı coinde tek pozisyon, tam çıkıştan sonra 1 saat bekleme, üst üste 2 stopta 24 saat kara liste, bakiye kontrolü. Kısmi satışın parası satış anında kasaya döner.
+
+**Modelleme:** 1m mum yeşilse açılış→dip→tepe→kapanış, kırmızıysa açılış→tepe→dip→kapanış yolu izlenir. Stop, kısmi kâr ve trailing eşikleri tam kesişim fiyatında tetiklenir; dolum bunun %0.15 altından (`--kayma-seviye`, gerçek stoplarda ölçülen ortalama taşma ~%0.17). Zaman aşımı, momentum ve RSI çıkışları o anki fiyattan %0.05 kaymayla. Eski sürüm 4 saatlik süre uzatmasında giriş zamanını sıfırladığı için gerçek giriş anı, dolum fiyatının 1m mum aralığına düştüğü an aranarak bulunur. Testler (`tests/test_v184_simulasyon.py`, 22 test): her çıkış tipi için elle kurulmuş senaryolar, 80 rastgele fiyat yolunda motorun 200 kat yoğun yolla aynı kararı verdiği diferansiyel test, bütçe kuralları, önbellek ve sahte borsayla uçtan uca çalıştırma.
+
+**Bilinen sınırlar:** BTC rejimi son kapanmış 15m mumla hesaplanır (canlı bot açık mumu da kullanır). Backfill kapalı mum modunda çalışır ve bugün listede olan paritelerle sınırlıdır (delist olanlar yok). Filtre modeli kullanılmaz (ezber).
+
+**Durum:** Bu çalışma ortamından `api.binance.com` erişimi kapalı (proxy 403). Bu yüzden simülasyon ya sunucuda çalıştırılmalı ya da ortamın ağ ayarlarında Binance'e izin verilmeli. Sunucuda (bot çalışırken de olur, API anahtarı gerekmez):
+```bash
+cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20   # ~1 dk deneme
+cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05              # tam: ~10-20 dk
+/root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-07 --bitis 2026-09-06 --kaynak gercek   # önbellekten, hızlı
+```
+Çıktı `v184_sim_rapor.txt`: (1) simülatör doğrulaması, (2) filtrelerin gerçek girişlerdeki etkisi, (3) çıkış mantığının etkisi (dönem bazında, %95 güven aralığıyla), (4) her senaryo için 100/450 USDT sonuçları. İndirilen veri `sim_onbellek/` klasöründe kalır.

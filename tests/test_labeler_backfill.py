@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import csv
-import os
 
 import numpy as np
 import pandas as pd

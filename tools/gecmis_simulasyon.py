@@ -19,6 +19,11 @@ bu, herhangi bir sentetik backtestten daha dürüst bir kanıttır. Yapılanlar:
 Kullanım:
   python tools/gecmis_simulasyon.py eski_core.csv core_islem_verileri_v2.csv.yedek core_islem_verileri.csv \
          --butce 100 450 --mod sabit oransal
+  # V18.4'ün çevrimdışı uygulanabilen giriş filtreleriyle, 30 günlük pencere:
+  python tools/gecmis_simulasyon.py ... --baslangic 2026-08-05 --bitis 2026-09-04 --max-atr 3 \
+         --ai-model core_xgboost_model.json
+
+Fiyat verisi gerektiren V18.4 simülasyonu (yeni çıkış mantığı, BTC rejim filtresi): tools/v184_simulasyon.py
 """
 import argparse
 import csv
@@ -74,20 +79,39 @@ def pozisyonlar(df):
     kayitlar = []
     for _, grp in df.groupby(anahtar, sort=False):
         grp = grp.sort_values('t')
-        kalan, getiri = 1.0, 0.0
+        kalan, getiri, bacaklar = 1.0, 0.0, []
         for _, r in grp.iterrows():
             pay = 0.5 * kalan if (r['Cikis_Tipi'] in KISMI_TIPLER and len(grp) > 1 and kalan > 0.5 - 1e-9) else kalan
-            getiri += pay * satir_getirisi(r['Giris_Fiyat'], r['Cikis_Fiyat'])
+            g_satir = satir_getirisi(r['Giris_Fiyat'], r['Cikis_Fiyat'])
+            getiri += pay * g_satir
+            bacaklar.append((r['t'], pay, g_satir, r['Cikis_Tipi']))
             kalan -= pay
             if kalan <= 1e-9:
                 break
+        if kalan > 1e-9:   # yalnız kısmi satış kaydı var: kalan maliyetinden iade sayılır (oynat ile aynı varsayım)
+            bacaklar.append((grp['t'].max(), kalan, 0.0, bacaklar[-1][3]))
         ilk = grp.iloc[0]
         giris = (grp['t'] - pd.to_timedelta(grp['Sure_Saat'].fillna(0), unit='h')).min()
         kayitlar.append({'sembol': ilk['Sembol'], 'giris': giris, 'cikis': grp['t'].max(),
                          'kasa_tipi': 'BALİNA' if str(ilk['Kasa_Tipi']).upper().startswith('BAL') else 'NORMAL',
                          'getiri': getiri, 'atr_pct': ilk['Giris_ATR_Pct'], 'n_satir': len(grp),
-                         'cikislar': ' + '.join(grp['Cikis_Tipi'])})
+                         'cikislar': ' + '.join(grp['Cikis_Tipi']), 'giris_fiyat': ilk['Giris_Fiyat'],
+                         'rsi': ilk['Giris_RSI'], 'vol_oran': ilk['Giris_Vol_Oran'], 'sinyal': ilk['Sinyal'],
+                         'bacaklar': bacaklar})
     return pd.DataFrame(kayitlar).sort_values('giris').reset_index(drop=True)
+
+
+def ai_skorlari(poz, model_yolu):
+    """Botun kullandığı ModelYuvasi ile giriş anındaki feature'lardan skor (kayıtlı feature'lar yeterliyse)."""
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from sniper.model_karti import ModelYuvasi
+    yuva = ModelYuvasi(model_yolu, 'core', 0.65, 'min')
+    mesaj = yuva.yenile()
+    if not yuva.yuklu:
+        raise SystemExit(f"Model yüklenemedi: {mesaj}")
+    skor = poz.apply(lambda r: yuva.skor({'rsi': r['rsi'], 'vol_ratio': r['vol_oran'], 'atr_pct': r['atr_pct'],
+                                          'signal': r['sinyal']}), axis=1)
+    return skor, yuva
 
 
 def oynat(poz, butce, mod='sabit', oran=0.20):
@@ -151,13 +175,29 @@ def main():
     ap.add_argument('--mod', nargs='+', default=['sabit', 'oransal'], choices=['sabit', 'oransal'])
     ap.add_argument('--oran', type=float, default=0.20, help='oransal mod: işlem başına özsermaye payı')
     ap.add_argument('--max-atr', type=float, default=None, help='ör. 3.0: V18.3+ giriş filtresi (ATR%%<3)')
+    ap.add_argument('--baslangic', default=None, help='ör. 2026-08-05: bu tarihten sonra AÇILAN pozisyonlar')
+    ap.add_argument('--bitis', default=None, help='ör. 2026-09-04: bu tarihten ÖNCE açılan pozisyonlar')
+    ap.add_argument('--ai-model', default=None, help='ör. core_xgboost_model.json: skoru eşiğin altındakileri çıkar')
+    ap.add_argument('--ai-esik', type=float, default=None, help='varsayılan: model kartındaki eşik, yoksa 0.65')
     a = ap.parse_args()
 
     df = oku(a.dosyalar)
     ana, yabanci, sahipsiz, tem = temizle(df)
     poz = pozisyonlar(ana)
     if a.max_atr is not None:
-        poz = poz[poz['atr_pct'] < a.max_atr].reset_index(drop=True)
+        poz = poz[poz['atr_pct'] <= a.max_atr].reset_index(drop=True)   # bot: ATR/fiyat > esik ise girmez
+    if a.baslangic:
+        poz = poz[poz['giris'] >= pd.Timestamp(a.baslangic)].reset_index(drop=True)
+    if a.bitis:
+        poz = poz[poz['giris'] < pd.Timestamp(a.bitis)].reset_index(drop=True)
+    if a.ai_model:
+        skor, yuva = ai_skorlari(poz, a.ai_model)
+        esik = a.ai_esik if a.ai_esik is not None else yuva.esik
+        engel = skor < esik
+        print(f"AI veto ({os.path.basename(a.ai_model)}, eşik {esik:.2f}): {int(engel.sum())}/{len(poz)} pozisyon "
+              + (f"engellenirdi | engellenenlerin ort. net getirisi %{poz.loc[engel, 'getiri'].mean() * 100:.3f}"
+                 if engel.any() else "engellenirdi"))
+        poz = poz[~engel].reset_index(drop=True)
     print(f"Satır: {tem['toplam_satir']} | başka bot: {tem['yabanci_satir']} | sahiplenilmiş: {tem['sahipsiz_satir']} | "
           f"komisyonsuz kayıtlı (düzeltildi): {tem['komisyonsuz_kayitli_satir']}")
     print(f"Pozisyon: {len(poz)} | {poz['giris'].min():%Y-%m-%d} → {poz['cikis'].max():%Y-%m-%d} | "

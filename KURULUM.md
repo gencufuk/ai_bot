@@ -50,6 +50,14 @@ Sadece paketin içeriğini kopyalayın.
    ```
 8. **Cron değişmez** (02:45 labeler, 03:00 trainer). Trainer kapılardan geçen bir model üretirse
    bot onu 5 dk içinde yükler ve Telegram'dan bildirir.
+9. **İsteğe bağlı: V18.4 geçmiş simülasyonu** (bot çalışırken de olur, API anahtarı gerekmez)
+   ```bash
+   /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20   # ~1 dk deneme
+   /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05              # tam: ~10-20 dk
+   cat v184_sim_rapor.txt
+   ```
+   Fiyat verisi `sim_onbellek/` klasörüne iner (tekrar çalıştırınca hızlıdır). `v184_sim_rapor.txt` dosyasını
+   paylaşırsanız sonuçları birlikte yorumlarız.
 
 ## Geri dönüş
 Botu durdurup yalnızca eski kod dosyalarını geri koyun (veri dosyalarına dokunmayın):
@@ -63,6 +71,6 @@ cd /root && tar xzf yedek_TARIH.tgz ./ai_bot.py ./ai_trainer.py ./shadow_labeler
 - `shadow_labeler.py`: V2 labeler
 - `backfill_sinyaller.py`: geçmiş sinyal üretimi
 - `sniper/`: ortak modüller
-- `tools/csv_onar.py`, `tools/kurulum_kontrol.py`, `tools/gecmis_simulasyon.py`
+- `tools/csv_onar.py`, `tools/kurulum_kontrol.py`, `tools/gecmis_simulasyon.py` (gerçekleşen işlemlerin bütçe replay'i), `tools/v184_simulasyon.py` (V18.4'ün geçmiş fiyatlarla simülasyonu)
 - `core_islem_verileri_v2_gecmis.onarildi.csv`: 31 Mayıs – 14 Eylül işlem geçmişiniz. Başka bottan karışan 9 satır ve feature'sız sahiplenilmiş 5 satır ayıklandı. Labeler bunu otomatik okur.
 - `core_islem_verileri_v2.csv.yedek.onarildi.csv`: kolon kayması onarılmış 16–20 Eylül V2 kayıtları.
