@@ -412,3 +412,39 @@ Rapor ve log: `veri/sim_2026-09-26/`. Kullanılan AI: canlıdaki eski core model
 - **Beklenti:** gerçek evrenin sonuçları iyimser, çünkü o günün botunun AI'ı ve filtreleri girişleri zaten seçmişti. Backfill ise daha kötümser.
   - V184_AI +26.40 USDT, B_V184_AI +11.06 USDT; canlı beklenti muhtemelen ikisinin arasında.
   - Dönemin büyük kısmı iyi geçti. 21 Eylül sonrasında gerçek işlemlerin ortalaması işlem başına %−0.47.
+
+### 10.5 Piyasa taraması: Ağustos botu ve filtre varyantları (26 Eylül, ikinci çalıştırma)
+Rapor, log ve sinyal tablosu: `veri/sim_2026-09-26/v184_sim_b_*`.
+- 250 coin, 5 Ağu – 26 Eyl, 1293 sinyal (ATR ≤ %4, BTC durumundan bağımsız); V18.4 kuralına uyan 693.
+- İlk çalıştırmada da olan üç senaryonun sonucu birebir aynı çıktı.
+
+| Senaryo (100 USDT, sabit kasa) | İşlem | USDT | maxDD | Ağustos | Eylül | Sinyal başı |
+|---|---|---|---|---|---|---|
+| B_V184 | 239 | +2.01 | %−10.3 | +10.34 | −8.33 | %+0.16 |
+| B_REJIMSIZ | 387 | +3.37 | %−11.5 | +11.82 | −8.45 | %+0.08 |
+| **B_V184_AI (canlıdaki kurulum)** | 147 | **+11.06** | **%−5.5** | +12.97 | −1.91 | %+0.20 |
+| B_AI_ATR4 | 169 | +4.95 | %−9.8 | +12.13 | −7.18 | %+0.03 |
+| B_AI_REJIMSIZ | 246 | +12.73 | %−7.4 | +15.71 | −2.98 | %+0.15 |
+| B_V1802 (Ağustos botu) | 285 | +14.55 | %−9.3 | +19.32 | −4.77 | %+0.20 |
+
+- **ATR %3–4 sinyalleri zarar ettiriyor.**
+  - V18.4 çıkışıyla n=41, ort %−0.93 (%95 GA −2.01 … −0.12, gün bazlı bootstrap); Ağustos çıkışıyla %−0.44.
+  - ATR sınırını %4'e açmak canlı kurulumun sonucunu +11.06'dan +4.95 USDT'ye düşürüyor, maxDD %−5.5'ten %−9.8'e çıkıyor.
+  - ATR ≤ %3 korunmalı. Bu, V18.4'ün Ağustos'a göre tek net iyileştirmesi.
+- **Yatay rejim sinyalleri başa baş.** V18.4 çıkışıyla n=163, ort %+0.07 (GA −0.43 … +0.51). Filtre sinyal başı getiriyi değiştirmiyor; işlem sayısını ve düşüşü azaltıyor.
+- **Aynı sinyallerde çıkış kuralı karşılaştırması** (n=444, eşleştirilmiş):
+  - Ağustos çıkışı ort %+0.18, V18.4 çıkışı %+0.05; fark +0.12 puan (GA −0.01 … +0.30).
+  - Gerçek girişlerde de aynı yön (+0.03, anlamsız): V18.4'ün çıkış değişiklikleri sonucu iyileştirmedi.
+  - Olası sebep yatay rejimdeki 1.5 saatlik momentum çıkışı. Yatay sinyaller Ağustos çıkışıyla %+0.31, V18.4 çıkışıyla %+0.07.
+- **Ağustos botu sinyal başına canlı kurulumla aynı:** %+0.20'ye %+0.20, fark GA −0.46 … +0.49.
+  - Kabaca iki kat fazla işlem yaptığı için iyi ayda daha çok kazanıyor, kötü ayda daha çok kaybediyor: Ağustos +19.3 / Eylül −4.8; canlı kurulum +13.0 / −1.9.
+  - Ağustos botunun fazladan aldığı 242 sinyalin ortalaması %+0.15. Bunlardan ATR %3–4 olan 57'si %−0.24, yatay rejimdeki 168'i %+0.31.
+- **AI vetosu sinyal başına zayıf, bütçe oynatmasında belirgin.**
+  - Sinyal başına geçen %+0.20, engellenen %+0.12; kazanma oranı %48'e %39.
+  - Bütçe oynatmasında AI'sız +2.01, AI'lı +11.06 USDT; Eylül'de −8.33'ten −1.91'e.
+- **Karma ayar tahmini.** CSV'den tek bacaklı bütçe oynatmasıyla hesaplandı; gerçek senaryolarla karşılaştırıldığında sapma 0.1 ile 3.7 USDT arasında.
+  - Canlı giriş filtreleri, yatay filtre olmadan, Ağustos çıkışıyla: ≈ +17.4 USDT (maxDD %−6.1, Eylül −0.3).
+  - Ağustos botu, ATR %3 ile: ≈ +14.6.
+  - Canlı giriş filtreleri, Ağustos çıkışıyla: ≈ +12.7.
+  - En iyisi dokuz denemenin en iyisi olduğu için iyimser; tek bir 52 günlük dönemde bu farklar gürültü aralığında.
+- **Karar (26 Eylül):** canlı kurulum değiştirilmedi. Aynı analiz 2–3 hafta sonra yeni dönemi de kapsayarak tekrarlanacak. Karma ayar (yatay filtre kaldırılır, Ağustos çıkış ayarları kullanılır, ATR ≤ %3 ve AI korunur) yeni dönemde de önde kalırsa uygulanacak.

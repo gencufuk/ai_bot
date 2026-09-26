@@ -1,0 +1,44 @@
+V18.4 GEÇMİŞ SİMÜLASYONU | 2026-08-05 00:00 → 2026-09-26 23:18 | 2026-09-26 23:18
+Ayarlar: kayma seviye %0.15 / zaman %0.05 | max süre 96 saat | AI: core_xgboost_model.json (eşik 0.65) | API isteği: 511
+NOT: AI modeli kartsız: eğitim dönemi bilinmiyor. Mevcut eski core model için adli analiz: ilk 68 işlem (31 May-15 Haz) -> Ağustos sonrası örneklem dışı.
+
+4) BÜTÇE SONUÇLARI (botun kurallarıyla). ilk30g: başlangıçtan 30 gün içinde kapanan işlemlerin kârı; maxDD gerçekleşmiş nakit + açık pozisyon maliyeti üzerinden (açık pozisyonun anlık zararı hariç)
+   senaryo       bütçe mod      işlem atlanan   toplam  getiri  maxDD  ilk30g 30g medyan  30g %10  30g %90
+   B_V184          100 sabit      239     190    +2.01   +2.0% -10.3%  +10.88      +9.19    -9.03   +12.84
+   B_V184          450 sabit      252     177    -1.21   -0.3%  -2.9%   +8.30      +6.97   -11.07   +10.21
+   B_V184          100 oransal    236     193    +2.57   +2.6% -10.8%  +11.91     +10.45    -8.82   +13.96
+   B_V184          450 oransal    236     193   +11.59   +2.6% -10.8%  +53.59     +47.04   -39.67   +62.82
+   B_REJIMSIZ      100 sabit      387     306    +3.37   +3.4% -11.5%  +11.93      +8.39    -6.73   +13.78
+   B_REJIMSIZ      450 sabit      402     291    -2.96   -0.7%  -3.1%   +6.25      +5.61    -8.77   +11.18
+   B_REJIMSIZ      100 oransal    380     313    +5.10   +5.1% -11.4%  +13.38     +10.47    -5.58   +16.01
+   B_REJIMSIZ      450 oransal    380     313   +22.95   +5.1% -11.4%  +60.21     +47.09   -25.09   +72.05
+   B_V184_AI       100 sabit      147      93   +11.06  +11.1%  -5.5%  +14.09     +13.20    -2.54   +16.03
+   B_V184_AI       450 sabit      149      91   +10.21   +2.3%  -1.4%  +13.24     +12.36    -3.07   +15.18
+   B_V184_AI       100 oransal    146      94   +11.45  +11.5%  -6.2%  +15.01     +13.80    -2.65   +16.75
+   B_V184_AI       450 oransal    146      94   +51.53  +11.5%  -6.2%  +67.53     +62.08   -11.93   +75.38
+   B_AI_ATR4       100 sabit      169     112    +4.95   +4.9%  -9.8%  +13.25     +11.85    -5.64   +15.45
+   B_AI_ATR4       450 sabit      171     110    +4.36   +1.0%  -2.4%  +12.66     +11.26    -6.17   +14.86
+   B_AI_ATR4       100 oransal    168     113    +5.04   +5.0% -10.8%  +14.29     +11.99    -5.95   +16.27
+   B_AI_ATR4       450 oransal    168     113   +22.66   +5.0% -10.8%  +64.29     +53.93   -26.77   +73.20
+   B_AI_REJIMSIZ   100 sabit      246     157   +12.73  +12.7%  -7.4%  +15.77     +13.19    +0.60   +16.52
+   B_AI_REJIMSIZ   450 sabit      248     155   +12.14   +2.7%  -1.9%  +15.18     +12.61    +0.07   +15.93
+   B_AI_REJIMSIZ   100 oransal    245     158   +13.24  +13.2%  -8.4%  +16.93     +13.60    +0.80   +17.10
+   B_AI_REJIMSIZ   450 oransal    245     158   +59.57  +13.2%  -8.4%  +76.21     +61.18    +3.59   +76.93
+   B_V1802         100 sabit      285     193   +14.55  +14.5%  -9.3%  +18.65     +12.19    -3.34   +20.91
+   B_V1802         450 sabit      290     188   +11.86   +2.6%  -2.6%  +16.95      +9.50    -5.18   +18.63
+   B_V1802         100 oransal    282     196   +14.81  +14.8% -10.8%  +19.73     +12.47    -3.54   +22.84
+   B_V1802         450 oransal    282     196   +66.62  +14.8% -10.8%  +88.79     +56.10   -15.94  +102.76
+   Süre sınırında/veri sonunda son fiyattan kapatılan pozisyon: {'B_V184': 3, 'B_REJIMSIZ': 3, 'B_V184_AI': 1, 'B_AI_ATR4': 1, 'B_AI_REJIMSIZ': 1, 'B_V1802': 6}
+
+5) PİYASA TARAMASI (backfill) — sinyal başı net getiri, bütçe kuralları olmadan (her sinyal tek başına; %95 GA gün bazlı bootstrap)
+   senaryo       sinyal     ort.  kazanan   %95 GA                 canlı kuruluma (B_V184_AI) göre fark
+   B_V184           429   %+0.16      44%   [%-0.49, %+0.92]       %-0.03 [%-0.23, %+0.15]
+   B_REJIMSIZ       693   %+0.08      44%   [%-0.34, %+0.61]       %-0.11 [%-0.43, %+0.24]
+   B_V184_AI        240   %+0.20      48%   [%-0.44, %+0.96]       (taban)
+   B_AI_ATR4        281   %+0.03      49%   [%-0.55, %+0.71]       %-0.17 [%-0.31, %+0.00]
+   B_AI_REJIMSIZ    403   %+0.15      49%   [%-0.25, %+0.63]       %-0.05 [%-0.40, %+0.33]
+   B_V1802          478   %+0.20      50%   [%-0.21, %+0.65]       %+0.00 [%-0.46, %+0.49]
+   ATR %3-4 arası sinyaller (B_AI_ATR4 ile eklenen): n=41 | ort %-0.93 [%-2.01, %-0.12] | kazanan %56
+   yatay rejim sinyalleri (B_AI_REJIMSIZ ile eklenen): n=163 | ort %+0.07 [%-0.43, %+0.51] | kazanan %50
+
+Senaryolar: B_V184: backfill sinyalleri, V18.4 | B_REJIMSIZ: backfill, yatay rejim filtresi yok | B_V184_AI: backfill, V18.4 + AI (canlıdaki kurulum) | B_AI_ATR4: backfill, V18.4 + AI, ATR sınırı %4 | B_AI_REJIMSIZ: backfill, V18.4 + AI, yatay rejim filtresi yok | B_V1802: backfill, Ağustos botu (V18.0.2 giriş filtreleri + çıkışı)
