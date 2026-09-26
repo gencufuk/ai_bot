@@ -56,6 +56,19 @@ def kart_oku(model_yolu: str) -> Optional[dict]:
     return kart
 
 
+def json_uyumlu(o):
+    """numpy skalerlerini (np.bool_, np.int64, np.float32...) JSON'a uygun Python tiplerine çevirir."""
+    try:
+        import numpy as np
+        if isinstance(o, np.generic):
+            return o.item()
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+    except ImportError:  # pragma: no cover
+        pass
+    return str(o)
+
+
 def modeli_kartla_kaydet(model, model_yolu: str, kart: dict) -> dict:
     """XGBoost modelini ve kartını atomik kaydeder (önce model, sonra hash'li kart)."""
     gecici = model_yolu + '.tmp.json'          # xgboost formatı uzantıdan anlar
@@ -66,7 +79,7 @@ def modeli_kartla_kaydet(model, model_yolu: str, kart: dict) -> dict:
     kart['model_dosyasi'] = os.path.basename(model_yolu)
     kart['model_sha256'] = dosya_hash(model_yolu)
     kart.setdefault('olusturma', datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'))
-    atomik_metin_yaz(kart_yolu(model_yolu), json.dumps(kart, ensure_ascii=False, indent=2))
+    atomik_metin_yaz(kart_yolu(model_yolu), json.dumps(kart, ensure_ascii=False, indent=2, default=json_uyumlu))
     return kart
 
 

@@ -1,31 +1,85 @@
 # -*- coding: utf-8 -*-
 """
-AI TRAINER V2
-- Kısmi kâr + tam çıkış satırlarını pozisyon bazında birleştirir (aynı pozisyon iki kez sayılmaz)
-- Zaman bazlı train/test ayrımı ile AUC doğrulaması yapar; başarısız model KAYDEDİLMEZ (eskisi korunur)
-- Sınıf dengesizliğini scale_pos_weight ile düzeltir
-- Hem filter_model.json (zarar filtresi) hem core_xgboost_model.json (kâr modeli) eğitir
+AI TRAINER V3
+
+V2'nin yapısal sorunları (ANALIZ_V18.4.md §2):
+  - Etiket gerçekleşen USDT kârıydı: kasa büyüklüğüne (20/40 USDT) ve botun o
+    haftaki çıkış mantığına bağlı, sürüm değiştikçe kayan bir hedef.
+  - Filtre (Net<-0.1) ve core (Net>+0.1) etiketleri neredeyse birbirinin tümleyeni:
+    iki model aynı bilgiyi iki kez öğreniyor, AND'lenince gürültü ikiye katlanıyordu.
+  - Tek 80/20 bölme: n_test ~100'de AUC standart hatası ~0.05; her gece yeniden
+    denendiği için şanslı bir bölme eninde sonunda 0.55'i geçip rastgele modeli
+    yayına alırdı (zaman içinde çoklu test).
+  - scale_pos_weight olasılık ölçeğini kaydırıyor, bottaki sabit 0.65/0.45 eşiklerini
+    anlamsızlaştırıyordu. Sinyal_Encoded veride %100 sabit (hep MSB).
+
+V3:
+  - Veri: etiketli_sinyaller.csv (core + shadow; shadow_labeler V2) + backfill_sinyaller.csv.
+    Hepsi AYNI etiket fonksiyonuyla etiketli (sniper.etiketleme) -> güvenle birleşir.
+  - Hedef: y = 1[Etiket_Getiri > 0] (net, komisyon dahil).
+  - Tek karar modeli (core). Eski filtre modeli yeni doğrulanmış model yayına alınınca emekliye ayrılır.
+  - Doğrulama: zaman sıralı genişleyen pencere walk-forward, etiket penceresi kadar purge,
+    episod (aynı sembolde 4 saat içindeki ardışık sinyaller) bazlı bootstrap güven aralığı.
+  - Adaylar: depth-1 (stump / GAM benzeri) ve depth-2 XGBoost; lineer baz model (sadece kıyas).
+  - Kapılar: havuzlanmış OOS AUC >= MIN_AUC, %95 alt güven sınırı > 0.5, katların çoğunda > 0.5,
+    ekonomik test (en kötü %30'u engellemek ortalama getiriyi anlamlı artırıyor mu, permütasyon).
+  - Eşik OPTİMİZE EDİLMEZ: OOS skorlarının ENGELLEME_ORANI kantili (seçim iyimserliği yok).
+  - Model + kart (feature listesi, eşik, metrikler, SHA-256) atomik kaydedilir; bot hot-reload eder.
+  - egitim_raporu.json: tüm metrikler, kararlar, kaynak dağılım kayması (adversarial validation).
+
+Kullanım: python ai_trainer.py            (cron 03:00)
+          python ai_trainer.py --kuru     (rapor üret, modele dokunma)
 """
-import os
+import argparse
 import datetime
+import json
+import math
+import os
+
+import numpy as np
 import pandas as pd
 import xgboost as xgb
 
+from sniper import etiket_deposu as depo
+from sniper.csv_kayit import atomik_metin_yaz
+from sniper.etiketleme import ETIKET_SURUMU
+from sniper.model_karti import json_uyumlu, modeli_kartla_kaydet
+from sniper.ozellikler import ozellik_matrisi
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-KAYNAK_DOSYALAR = ['core_islem_verileri.csv', 'ufuk_islem_verileri.csv']
+ETIKET_DOSYALARI = ['etiketli_sinyaller.csv', 'backfill_sinyaller.csv']
 LOG_DOSYASI = os.path.join(BASE_DIR, 'ai_trainer_history.log')
+RAPOR_DOSYASI = os.path.join(BASE_DIR, 'egitim_raporu.json')
+CORE_MODEL = os.path.join(BASE_DIR, 'core_xgboost_model.json')
+FILTRE_MODEL = os.path.join(BASE_DIR, 'filter_model.json')
 
-COLS = ['Islem_Zamani', 'Sembol', 'Sinyal', 'Kasa_Tipi', 'Giris_RSI', 'Giris_Vol_Oran',
-        'Giris_ATR_Pct', 'Giris_Fiyat', 'Cikis_Fiyat', 'Kar_Orani', 'Net_Kar_USDT',
-        'Cikis_Tipi', 'Sure_Saat']
-FEATURES = ['Giris_RSI', 'Giris_Vol_Oran', 'Giris_ATR_Pct']
+MIN_ORNEK = 150            # bundan az sinyalle eğitim yapılmaz
+MIN_SINIF = 30             # her sınıftan en az bu kadar örnek
+MIN_AUC = 0.55             # havuzlanmış OOS AUC alt sınırı
+CV_KAT = 5                 # walk-forward test katı sayısı (küçük veride otomatik azalır)
+ETIKET_PENCERE_MS = 4 * 3_600_000
+ENGELLEME_ORANI = 0.30     # model en düşük skorlu bu orandaki sinyalleri engeller
+EKONOMIK_P = 0.05
+BOOT_N, PERM_N = 2000, 5000
+SADECE_BTC_OK = True       # canlı bot BTC_OK=False iken sinyal analiz etmez: dağılımı eşle
+CANLI_KAYNAKLAR = ('core', 'shadow')
+CANLI_AGIRLIK = 1.0        # canlı örneklere ek ağırlık (dağılım kaymasında >1 denenebilir)
+ESKI_FILTREYI_EMEKLI_ET = True
 
-ZARAR_ESIGI = -0.1       # pozisyonun TOPLAM net kârı bunun altındaysa "kötü işlem" (filtre hedefi)
-KAR_ESIGI = 0.1          # core model için "iyi işlem" eşiği
-TEST_ORANI = 0.2         # zaman bazlı doğrulama: kronolojik son %20 test kümesi
-MIN_POZISYON = 100       # bundan az pozisyonla eğitim yapılmaz
-MIN_AUC = 0.55           # test AUC bunun altındaysa model kaydedilmez
-BASLANGIC_TARIHI = None  # ör. '2026-08-01': eski bot versiyonlarının verisini dışlamak için
+# Varsayılan feature'lar: geçmişe dönük üretilebilen (backfill) ve ölçekten bağımsız olanlar.
+# Canlıya özgü (OB_Oran, Spread_Bps, Mum_Ilerleme, Stop_Sayisi) yeterli canlı veri birikince eklenmeli.
+FEATURES_KOMPAKT = ['Giris_RSI', 'Log_Vol_Oran', 'Giris_ATR_Pct', 'EMA15m_ATR', 'Pump3s_ATR',
+                    'Zirve_ATR', 'BTC_1h_Degisim', 'BTC_ADX']
+FEATURES_GENIS = FEATURES_KOMPAKT + ['Pump6s_ATR', 'EMA1h_ATR', 'BTC_EMA_Uzaklik', 'Sym_ADX',
+                                     'Kapali_Mum_Onay', 'Piyasa_Genislik', 'Saat_Sin', 'Saat_Cos']
+GENIS_ESIK = 400           # bu kadar örnekten sonra geniş set (≈ sınıf başına 15+ olay/feature)
+
+ADAYLAR = {
+    'xgb_d1': dict(n_estimators=300, learning_rate=0.03, max_depth=1, min_child_weight=3,
+                   subsample=0.8, colsample_bytree=0.8, reg_lambda=5.0),
+    'xgb_d2': dict(n_estimators=200, learning_rate=0.03, max_depth=2, min_child_weight=5,
+                   subsample=0.8, colsample_bytree=0.7, reg_lambda=10.0, gamma=0.5),
+}
 
 
 def log(mesaj):
@@ -38,10 +92,13 @@ def log(mesaj):
         pass
 
 
-def auc_hesapla(y_true, y_score):
-    # Mann-Whitney U tabanlı AUC (sklearn bağımlılığı olmadan)
-    y = pd.Series(list(y_true)).reset_index(drop=True)
-    r = pd.Series(list(y_score)).rank(method='average')
+# --------------------------------------------------------------------------------------
+# İstatistik yardımcıları (sklearn bağımlılığı yok)
+# --------------------------------------------------------------------------------------
+def auc(y, s):
+    """Mann-Whitney U tabanlı AUC; tek sınıf varsa None."""
+    y = np.asarray(y, dtype=int)
+    r = pd.Series(np.asarray(s, dtype=float)).rank(method='average').to_numpy()
     n1 = int(y.sum())
     n0 = len(y) - n1
     if n1 == 0 or n0 == 0:
@@ -49,96 +106,285 @@ def auc_hesapla(y_true, y_score):
     return float((r[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
 
 
-def veriyi_yukle():
-    parcalar = []
-    for ad in KAYNAK_DOSYALAR:
-        yol = os.path.join(BASE_DIR, ad)
-        if os.path.exists(yol):
-            parcalar.append(pd.read_csv(yol, header=None, names=COLS))
-    if not parcalar:
-        return None
-    df = pd.concat(parcalar, ignore_index=True)
-    # Olası başlık satırları / bozuk kayıtlar sayıya çevrilemez -> NaN -> aşağıda düşer
-    for k in FEATURES + ['Giris_Fiyat', 'Net_Kar_USDT']:
-        df[k] = pd.to_numeric(df[k], errors='coerce')
-    df['Islem_Zamani'] = pd.to_datetime(df['Islem_Zamani'], errors='coerce')
-    df = df.dropna(subset=FEATURES + ['Giris_Fiyat', 'Net_Kar_USDT', 'Islem_Zamani'])
-    if BASLANGIC_TARIHI:
-        df = df[df['Islem_Zamani'] >= pd.Timestamp(BASLANGIC_TARIHI)]
+def episod_bootstrap(y, s, ep, n=BOOT_N, seed=0):
+    """Episod bazlı (blok) bootstrap AUC güven aralığı: ardışık, pencereleri çakışan
+    sinyaller bağımsız sayılmaz."""
+    rng = np.random.default_rng(seed)
+    y, s, ep = np.asarray(y), np.asarray(s), np.asarray(ep)
+    uniq = np.unique(ep)
+    indeks = {e: np.flatnonzero(ep == e) for e in uniq}
+    degerler = []
+    for _ in range(n):
+        sec = rng.choice(uniq, size=len(uniq), replace=True)
+        i = np.concatenate([indeks[e] for e in sec])
+        a = auc(y[i], s[i])
+        if a is not None:
+            degerler.append(a)
+    if not degerler:
+        return None, None
+    return float(np.percentile(degerler, 2.5)), float(np.percentile(degerler, 97.5))
+
+
+def ekonomik_test(getiri, skor, engelleme_orani=ENGELLEME_ORANI, n=PERM_N, seed=1):
+    """En düşük skorlu %X engellenirse ortalama getiri ne kadar artar; skorlar karıştırılarak
+    aynı artışın şansla elde edilme olasılığı (tek yönlü p)."""
+    rng = np.random.default_rng(seed)
+    getiri, skor = np.asarray(getiri, float), np.asarray(skor, float)
+    esik = float(np.quantile(skor, engelleme_orani))
+    gecen = skor >= esik
+    fark = float(getiri[gecen].mean() - getiri.mean())
+    say = 0
+    for _ in range(n):
+        p = rng.permutation(skor)
+        if getiri[p >= esik].mean() - getiri.mean() >= fark:
+            say += 1
+    return {'esik_oos': esik, 'gecen_oran': float(gecen.mean()), 'ort_getiri_hepsi': float(getiri.mean()),
+            'ort_getiri_gecen': float(getiri[gecen].mean()), 'ort_getiri_engellenen': float(getiri[~gecen].mean()),
+            'artis': fark, 'p': (say + 1) / (n + 1)}
+
+
+# --------------------------------------------------------------------------------------
+# Veri
+# --------------------------------------------------------------------------------------
+def episodlar(df, pencere_ms=ETIKET_PENCERE_MS):
+    """Aynı sembolde bir öncekinden < pencere sonra gelen sinyal aynı episoda aittir
+    (etiket pencereleri çakışır -> bağımsız gözlem değildir)."""
+    ep = np.empty(len(df), dtype=object)
+    for sym, g in df.groupby('Sembol', sort=False):
+        ts = g['Ts'].to_numpy()
+        sira = np.argsort(ts, kind='stable')
+        yeni = np.r_[True, np.diff(ts[sira]) >= pencere_ms]
+        no = np.cumsum(yeni)
+        etiket = np.empty(len(g), dtype=object)
+        etiket[sira] = [f"{sym}#{k}" for k in no]
+        ep[df.index.get_indexer(g.index)] = etiket
+    return ep
+
+
+def veriyi_hazirla(yollar):
+    df = depo.oku(yollar, ETIKET_SURUMU)
+    if df.empty:
+        return df
+    df = df[df['Etiket_Sonuc'].isin(['TP', 'SL', 'KILIT', 'ZAMAN'])].copy()
+    df = df.dropna(subset=['Ts', 'Etiket_Getiri'])
+    if SADECE_BTC_OK and 'BTC_OK' in df.columns:
+        btc_ok = pd.to_numeric(df['BTC_OK'], errors='coerce').fillna(1)
+        df = df[btc_ok == 1]
+    df = df.sort_values('Ts', kind='stable').reset_index(drop=True)
+    df['y'] = (df['Etiket_Getiri'] > 0).astype(int)
+    df['episod'] = episodlar(df)
+    boyut = df.groupby('episod')['episod'].transform('size')
+    df['w'] = 1.0 / boyut                                         # benzersizlik ağırlığı
+    df.loc[df['Kaynak'].isin(CANLI_KAYNAKLAR), 'w'] *= CANLI_AGIRLIK
     return df
 
 
-def pozisyonlara_indirge(df):
-    # Kısmi kâr + tam çıkış aynı pozisyonun parçalarıdır; giriş bilgileri birebir aynı
-    # olduğundan bu kolonlarla gruplayıp net kârları toplamak pozisyonun gerçek sonucunu verir.
-    df = df.copy()
-    df['Sinyal'] = df['Sinyal'].fillna('')
-    grup = ['Sembol', 'Giris_Fiyat'] + FEATURES + ['Sinyal']
-    poz = df.groupby(grup, as_index=False).agg(
-        Net_Kar_USDT=('Net_Kar_USDT', 'sum'),
-        Islem_Zamani=('Islem_Zamani', 'min'))
-    return poz.sort_values('Islem_Zamani').reset_index(drop=True)
+def feature_sec(df, aday_liste):
+    X = ozellik_matrisi(df, aday_liste)
+    secilen, elenen = [], {}
+    for f in aday_liste:
+        s = X[f]
+        if s.isna().mean() > 0.5:
+            elenen[f] = 'eksik>%50'
+        elif s.nunique(dropna=True) <= 1:
+            elenen[f] = 'sabit'
+        else:
+            secilen.append(f)
+    return secilen, elenen
 
 
-def model_egit_ve_dogrula(X, y, model_adi, dosya):
-    """X kronolojik sıralı olmalı. Doğrulama geçerse tüm veriyle eğitip kaydeder."""
-    n_test = max(1, int(len(X) * TEST_ORANI))
-    X_tr, X_te = X.iloc[:-n_test], X.iloc[-n_test:]
-    y_tr, y_te = y.iloc[:-n_test], y.iloc[-n_test:]
+def katlar(ts, k, pencere_ms=ETIKET_PENCERE_MS, min_egitim_orani=0.4):
+    """Genişleyen pencere walk-forward. Test bloğu başlangıcından önceki `pencere_ms` içinde
+    kalan eğitim örnekleri atılır (purge): etiketleri test dönemine taşar."""
+    n = len(ts)
+    bas = int(n * min_egitim_orani)
+    sinirlar = np.linspace(bas, n, k + 1).astype(int)
+    sonuc = []
+    for i in range(k):
+        t_bas, t_bit = sinirlar[i], sinirlar[i + 1]
+        if t_bit - t_bas < 5:
+            continue
+        test_t0 = ts[t_bas]
+        egitim = np.flatnonzero(ts[:t_bas] < test_t0 - pencere_ms)
+        sonuc.append((egitim, np.arange(t_bas, t_bit)))
+    return sonuc
 
-    if y_tr.nunique() < 2 or y_te.nunique() < 2:
-        log(f"⚠️ {model_adi}: train/test kümelerinde her iki sınıf da yok, eğitim atlandı.")
-        return
 
-    def yeni_model(y_ref):
-        pos = int(y_ref.sum())
-        agirlik = (len(y_ref) - pos) / pos if pos > 0 else 1.0
-        return xgb.XGBClassifier(
-            n_estimators=100, max_depth=3, learning_rate=0.05,
-            subsample=0.8, random_state=42, eval_metric='logloss',
-            scale_pos_weight=agirlik)
+# --------------------------------------------------------------------------------------
+# Modeller
+# --------------------------------------------------------------------------------------
+def xgb_model(params):
+    return xgb.XGBClassifier(objective='binary:logistic', eval_metric='logloss', random_state=42,
+                             tree_method='hist', n_jobs=2, **params)
 
-    model = yeni_model(y_tr)
-    model.fit(X_tr, y_tr)
-    skorlar = model.predict_proba(X_te)[:, 1]
-    auc = auc_hesapla(y_te, skorlar)
 
-    if auc is None:
-        log(f"⚠️ {model_adi}: AUC hesaplanamadı, eğitim atlandı.")
-        return
-    if auc < MIN_AUC:
-        log(f"🛑 {model_adi}: Test AUC {auc:.3f} < {MIN_AUC} — model KAYDEDİLMEDİ, eski model korunuyor.")
-        return
+def lineer_baz(X_tr, y_tr, w_tr, X_te, lam=1.0):
+    """Standartlaştırılmış, L2 cezalı lojistik regresyon (Newton/IRLS, numpy). Sadece KIYAS içindir:
+    ağaç modeli bunu anlamlı geçemiyorsa sinyal büyük ölçüde doğrusaldır ve derinlik aşırı öğrenmedir.
+    (xgboost gblinear 3.4 itibarıyla deprecated olduğu için kullanılmıyor.)"""
+    med = X_tr.median()
+    mu, sd = X_tr.fillna(med).mean(), X_tr.fillna(med).std().replace(0, 1).fillna(1)
+    z = lambda X: np.c_[np.ones(len(X)), ((X.fillna(med) - mu) / sd).fillna(0.0).to_numpy()]
+    A, y, w = z(X_tr), np.asarray(y_tr, float), np.asarray(w_tr, float)
+    ceza = lam * np.r_[0.0, np.ones(A.shape[1] - 1)]
+    beta = np.zeros(A.shape[1])
+    for _ in range(50):
+        p = 1 / (1 + np.exp(-np.clip(A @ beta, -30, 30)))
+        g = A.T @ (w * (p - y)) + ceza * beta
+        H = (A * (w * p * (1 - p))[:, None]).T @ A + np.diag(ceza + 1e-9)
+        adim = np.linalg.solve(H, g)
+        beta -= adim
+        if np.abs(adim).max() < 1e-8:
+            break
+    return 1 / (1 + np.exp(-np.clip(z(X_te) @ beta, -30, 30)))
 
-    # Doğrulama geçti -> dağıtım için tüm veriyle yeniden eğit ve kaydet
-    final = yeni_model(y)
-    final.fit(X, y)
-    final.save_model(os.path.join(BASE_DIR, dosya))
-    log(f"✅ {model_adi}: Test AUC {auc:.3f} | {len(X)} pozisyon ({int(y.sum())} pozitif) | {dosya} güncellendi.")
+
+def capraz_dogrula(df, X, aday):
+    ts, y, w = df['Ts'].to_numpy(), df['y'].to_numpy(), df['w'].to_numpy()
+    k = CV_KAT if len(df) >= 500 else 3
+    oos = np.full(len(df), np.nan)
+    kat_auc = []
+    for egitim, test in katlar(ts, k):
+        if len(egitim) < 50 or len(np.unique(y[egitim])) < 2:
+            continue
+        if aday == 'lineer':
+            oos[test] = lineer_baz(X.iloc[egitim], y[egitim], w[egitim], X.iloc[test])
+        else:
+            m = xgb_model(ADAYLAR[aday])
+            m.fit(X.iloc[egitim], y[egitim], sample_weight=w[egitim])
+            oos[test] = m.predict_proba(X.iloc[test])[:, 1]
+        kat_auc.append(auc(y[test], oos[test]))
+    return oos, kat_auc
+
+
+def dagilim_kaymasi(df, X):
+    """Adversarial validation: model canlı (core+shadow) ile backfill'i ayırt edebiliyor mu?
+    AUC ~0.5: aynı dağılım; yüksek: backfill canlıyı temsil etmiyor (ör. kapanmamış mum etkisi)."""
+    kaynak = df['Kaynak'].isin(CANLI_KAYNAKLAR).astype(int).to_numpy()
+    if kaynak.sum() < 30 or (1 - kaynak).sum() < 30:
+        return None
+    rng = np.random.default_rng(3)
+    kat = rng.integers(0, 3, len(df))
+    skor = np.zeros(len(df))
+    for i in range(3):
+        tr, te = kat != i, kat == i
+        m = xgb_model(dict(n_estimators=100, learning_rate=0.1, max_depth=2))
+        m.fit(X[tr], kaynak[tr])
+        skor[te] = m.predict_proba(X[te])[:, 1]
+    m = xgb_model(dict(n_estimators=100, learning_rate=0.1, max_depth=2)).fit(X, kaynak)
+    onem = pd.Series(m.get_booster().get_score(importance_type='gain')).sort_values(ascending=False)
+    return {'auc': auc(kaynak, skor), 'en_ayirt_edici': onem.head(5).round(3).to_dict()}
+
+
+# --------------------------------------------------------------------------------------
+def egit(yollar, kuru=False):
+    rapor = {'tarih': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
+             'etiket_surumu': ETIKET_SURUMU, 'karar': None}
+    df = veriyi_hazirla(yollar)
+    if df.empty:
+        log("❌ Etiketli veri yok. Önce: python shadow_labeler.py (ve önerilen: python backfill_sinyaller.py)")
+        rapor['karar'] = 'veri_yok'
+        return rapor
+    rapor['veri'] = {'n': int(len(df)), 'pozitif': int(df['y'].sum()), 'episod': int(df['episod'].nunique()),
+                     'kaynak': df['Kaynak'].value_counts().to_dict(),
+                     'donem': [str(pd.Timestamp(df['Ts'].min(), unit='ms')), str(pd.Timestamp(df['Ts'].max(), unit='ms'))],
+                     'sonuc_dagilimi': df['Etiket_Sonuc'].value_counts().to_dict()}
+    log(f"📊 {len(df)} etiketli sinyal ({df['episod'].nunique()} episod) | kaynak: {rapor['veri']['kaynak']} | "
+        f"pozitif oran: {df['y'].mean():.2f}")
+    n_poz, n_neg = int(df['y'].sum()), int(len(df) - df['y'].sum())
+    if len(df) < MIN_ORNEK or min(n_poz, n_neg) < MIN_SINIF:
+        log(f"⚠️ Yetersiz veri: {len(df)} sinyal ({n_poz}+/{n_neg}-); gereken {MIN_ORNEK} ve sınıf başına "
+            f"{MIN_SINIF}. Çözüm: python backfill_sinyaller.py --gun 180 — eğitim yapılmadı, model korunuyor.")
+        rapor['karar'] = 'yetersiz_veri'
+        return rapor
+
+    aday_feat = FEATURES_GENIS if len(df) >= GENIS_ESIK else FEATURES_KOMPAKT
+    featurelar, elenen = feature_sec(df, aday_feat)
+    X = ozellik_matrisi(df, featurelar)
+    rapor['featurelar'], rapor['elenen_featurelar'] = featurelar, elenen
+    rapor['dagilim_kaymasi'] = dagilim_kaymasi(df, X)
+    if rapor['dagilim_kaymasi']:
+        log(f"🔎 Canlı↔backfill ayırt edilebilirliği AUC {rapor['dagilim_kaymasi']['auc']:.2f} "
+            f"(0.5 ideal); en ayırt edici: {list(rapor['dagilim_kaymasi']['en_ayirt_edici'])[:3]}")
+
+    y, ep = df['y'].to_numpy(), df['episod'].to_numpy()
+    sonuclar = {}
+    for aday in ['lineer'] + list(ADAYLAR):
+        oos, kat_auc = capraz_dogrula(df, X, aday)
+        m = ~np.isnan(oos)
+        a = auc(y[m], oos[m]) if m.sum() else None
+        alt, ust = episod_bootstrap(y[m], oos[m], ep[m]) if a is not None else (None, None)
+        sonuclar[aday] = {'oos_auc': a, 'ci95': [alt, ust], 'kat_auc': kat_auc, 'n_oos': int(m.sum()), '_oos': oos}
+        log(f"   {aday:7s}: OOS AUC {a if a is None else round(a, 3)} (95% GA {alt and round(alt, 3)}–{ust and round(ust, 3)}) "
+            f"| katlar {[round(x, 3) for x in kat_auc if x is not None]}")
+
+    agac = {k: v for k, v in sonuclar.items() if k != 'lineer' and v['oos_auc'] is not None}
+    if not agac:
+        log("⚠️ Çapraz doğrulama yapılamadı (katlarda tek sınıf). Model korunuyor.")
+        rapor['karar'] = 'cv_basarisiz'
+        return rapor
+    en_iyi = max(agac, key=lambda k: agac[k]['oos_auc'])
+    s = sonuclar[en_iyi]
+    oos = s['_oos']
+    m = ~np.isnan(oos)
+    eko = ekonomik_test(df['Etiket_Getiri'].to_numpy()[m], oos[m])
+    canli = m & df['Kaynak'].isin(CANLI_KAYNAKLAR).to_numpy()
+    canli_auc = auc(y[canli], oos[canli]) if canli.sum() >= 40 else None
+    kat_ok = sum(1 for x in s['kat_auc'] if x is not None and x > 0.5)
+
+    kapilar = {
+        'auc': s['oos_auc'] >= MIN_AUC,
+        'auc_alt_sinir': (s['ci95'][0] or 0) > 0.5,
+        'kat_kararliligi': kat_ok >= math.ceil(0.6 * len(s['kat_auc'])),
+        'ekonomik': eko['artis'] > 0 and eko['p'] < EKONOMIK_P,
+        'canli_transfer': canli_auc is None or canli.sum() < 100 or canli_auc >= 0.5,
+    }
+    rapor.update({'adaylar': {k: {kk: vv for kk, vv in v.items() if kk != '_oos'} for k, v in sonuclar.items()},
+                  'secilen': en_iyi, 'ekonomik': eko, 'canli_oos_auc': canli_auc, 'kapilar': kapilar,
+                  'lineer_kiyas': sonuclar['lineer']['oos_auc']})
+    log(f"🧪 Seçilen {en_iyi}: engellenen %{ENGELLEME_ORANI * 100:.0f} -> ort. net getiri "
+        f"{eko['ort_getiri_hepsi'] * 100:+.2f}% → {eko['ort_getiri_gecen'] * 100:+.2f}% (p={eko['p']:.3f}) | "
+        f"canlı OOS AUC: {canli_auc if canli_auc is None else round(canli_auc, 3)}")
+
+    if not all(kapilar.values()):
+        basarisiz = [k for k, v in kapilar.items() if not v]
+        log(f"🛑 Kapılar geçilemedi ({', '.join(basarisiz)}): model KAYDEDİLMEDİ, eski model korunuyor.")
+        rapor['karar'] = 'reddedildi'
+        return rapor
+    if kuru:
+        log("🧪 --kuru: tüm kapılar geçti ama model kaydedilmedi.")
+        rapor['karar'] = 'kuru_gecti'
+        return rapor
+
+    final = xgb_model(ADAYLAR[en_iyi])
+    final.fit(X, y, sample_weight=df['w'].to_numpy())
+    surum = f"v3-{datetime.datetime.now(datetime.timezone.utc):%Y%m%d%H%M}-{en_iyi}"
+    kart = {'surum': surum, 'rol': 'core', 'yon': 'min', 'esik': eko['esik_oos'], 'ozellikler': featurelar,
+            'hedef': 'Etiket_Getiri > 0', 'etiket_surumu': ETIKET_SURUMU,
+            'hedef_engelleme_orani': ENGELLEME_ORANI,
+            'dogrulama': {k: rapor[k] for k in ('adaylar', 'secilen', 'ekonomik', 'canli_oos_auc', 'kapilar')},
+            'veri': rapor['veri'], 'xgboost_surumu': xgb.__version__,
+            'onem_gain': {k: round(v, 4) for k, v in final.get_booster().get_score(importance_type='gain').items()}}
+    modeli_kartla_kaydet(final, CORE_MODEL, kart)
+    log(f"✅ Core model yayına alındı: {surum} | OOS AUC {s['oos_auc']:.3f} | eşik {eko['esik_oos']:.3f} | "
+        f"{len(featurelar)} feature")
+    rapor['karar'], rapor['surum'] = 'yayinda', surum
+    if ESKI_FILTREYI_EMEKLI_ET and os.path.exists(FILTRE_MODEL):
+        hedef = f"{FILTRE_MODEL}.emekli_{int(datetime.datetime.now().timestamp())}"
+        os.replace(FILTRE_MODEL, hedef)
+        log(f"🗄️ Doğrulanmamış eski filtre modeli emekliye ayrıldı -> {os.path.basename(hedef)}")
+    return rapor
 
 
 def main():
-    df = veriyi_yukle()
-    if df is None or df.empty:
-        log("❌ Eğitilecek veri bulunamadı.")
-        return
-
-    poz = pozisyonlara_indirge(df)
-    log(f"📊 {len(df)} işlem satırı -> {len(poz)} benzersiz pozisyon.")
-    if len(poz) < MIN_POZISYON:
-        log(f"⚠️ Yetersiz veri: {len(poz)} pozisyon (< {MIN_POZISYON}), eğitim yapılmadı.")
-        return
-
-    # 1) FİLTRE MODELİ: zarar ettiren piyasa koşullarını tanır (1 = kötü işlem)
-    y_filtre = (poz['Net_Kar_USDT'] < ZARAR_ESIGI).astype(int)
-    model_egit_ve_dogrula(poz[FEATURES], y_filtre, 'Filtre Beyni', 'filter_model.json')
-
-    # 2) CORE MODEL: kâr ettiren işlemleri tanır (1 = iyi işlem); sinyal tipi de feature
-    #    (Bot tarafındaki kolon sırasıyla birebir aynı: FEATURES + Sinyal_Encoded)
-    poz = poz.copy()
-    poz['Sinyal_Encoded'] = poz['Sinyal'].map({'MSB': 1, 'Engulf': 2}).fillna(0).astype(int)
-    y_core = (poz['Net_Kar_USDT'] > KAR_ESIGI).astype(int)
-    model_egit_ve_dogrula(poz[FEATURES + ['Sinyal_Encoded']], y_core, 'Core Beyin', 'core_xgboost_model.json')
+    ap = argparse.ArgumentParser(description="AI Trainer V3")
+    ap.add_argument('--kuru', action='store_true', help='rapor üret, modeli kaydetme')
+    a = ap.parse_args()
+    rapor = egit([os.path.join(BASE_DIR, d) for d in ETIKET_DOSYALARI], kuru=a.kuru)
+    try:
+        atomik_metin_yaz(RAPOR_DOSYASI, json.dumps(rapor, ensure_ascii=False, indent=2, default=json_uyumlu))
+    except OSError as e:
+        log(f"⚠️ Rapor yazılamadı: {e}")
 
 
 if __name__ == "__main__":
