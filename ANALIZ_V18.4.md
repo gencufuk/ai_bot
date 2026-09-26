@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3); bu ortamdan Binance'e erişim olmadığı için sunucuda çalıştırılmalı.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş.
 
 ---
 
@@ -364,10 +364,47 @@ Testler (`tests/test_v184_simulasyon.py`, 30 test): her çıkış tipi için ell
 
 **Bilinen sınırlar:** BTC rejimi son kapanmış 15m mumla hesaplanır (canlı bot açık mumu da kullanır). Backfill kapalı mum modunda çalışır ve bugün listede olan paritelerle sınırlıdır (delist olanlar yok). Filtre modeli kullanılmaz (ezber).
 
-**Durum:** Bu çalışma ortamından `api.binance.com` erişimi kapalı (proxy 403). Bu yüzden simülasyon ya sunucuda çalıştırılmalı ya da ortamın ağ ayarlarında Binance'e izin verilmeli. Sunucuda (bot çalışırken de olur, API anahtarı gerekmez):
+**Durum:** 26 Eylül'de sunucuda çalıştırıldı; sonuçlar §10.4'te. Bu çalışma ortamından `api.binance.com` erişimi kapalı (proxy 403). Bu yüzden simülasyon ya sunucuda çalıştırılmalı ya da ortamın ağ ayarlarında Binance'e izin verilmeli. Sunucuda (bot çalışırken de olur, API anahtarı gerekmez):
 ```bash
 cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20   # ~1 dk deneme
 cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05              # tam: ~10-20 dk
 /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-07 --bitis 2026-09-06 --kaynak gercek   # önbellekten, hızlı
 ```
 Çıktı `v184_sim_rapor.txt`: (1) simülatör doğrulaması, (2) filtrelerin gerçek girişlerdeki etkisi, (3) çıkış mantığının etkisi (dönem bazında, %95 güven aralığıyla), (4) her senaryo için 100/450 USDT sonuçları. İndirilen veri `sim_onbellek/` klasöründe kalır.
+
+### 10.4 Sunucu sonuçları (26 Eylül: 5 Ağustos – 26 Eylül, 312 gerçek pozisyon + 250 coinlik backfill)
+Rapor ve log: `veri/sim_2026-09-26/`. Kullanılan AI: canlıdaki eski core model (kartsız, 0.65 eşik; ilk 68 işlemle, 31 May–15 Haz eğitildi, yani bu dönem için örneklem dışı).
+
+- **Simülatör doğrulaması:** V18.0.2 dönemindeki 239 girişte simülasyon ile gerçekleşen arasında korelasyon 0.94, son çıkış tipi uyumu %95. Ortalama: simülasyon %+0.61, gerçek %+0.68 (simülatör hafif temkinli). Stop'larda sapma %0.00.
+- **Eski core modelin vetosu bu dönemde işe yarıyor.**
+  - Gerçek girişlerde vetolanacak 48 işlemin gerçekleşen ortalaması %−0.73, geçenlerin %+0.65.
+  - Backfill'de (100 USDT, sabit kasa): V18.4 AI'sız +2.01 USDT (maxDD %−10.3), AI'lı +11.06 USDT (%−5.5).
+  - İki ayrı evrende aynı yön. §2.2'deki sınırda ayrım bulgusu (73 pozisyon) bu genişlikte veriyle güçlendi; canlı bloklama modunun korunmasını destekliyor.
+- **Çıkış mantığı:** V18.4 − Ağustos-sim farkı işlem başına −0.03 puan (%95 GA −0.17 … +0.12).
+  - 5 Ağu – 15 Eyl: −0.05 (anlamsız).
+  - 21 Eylül sonrası: +0.20 (GA +0.03 … +0.39).
+  - V18.4 çıkışları kötü dönemde daha az kaybettiriyor, iyi dönemde çok az geride kalıyor.
+- **Giriş filtreleri** (gerçek girişlerde, elenenlerin gerçekleşen ortalaması):
+  - yatay rejim: 112 işlem eleniyor, elenen %+0.19 / geçen %+0.58;
+  - ATR > %3: 30 işlem, elenen %+0.96 / geçen %+0.38 (n küçük);
+  - BTC onayı: 32 işlem, elenen %+0.22.
+
+  V18.4 çıkışlarıyla birlikte bu filtreler işlem sayısını 312'den 154'e indiriyor. Toplam kâr neredeyse değişmiyor (+22.39 → +22.29 USDT), maxDD %−6.3'ten %−5.1'e iniyor.
+- **Bütçe** (52 gün, sabit kasa 20/40 USDT; USDT ve maxDD 100 USDT bütçe için):
+
+  | Senaryo | USDT | maxDD |
+  |---|---|---|
+  | GERCEK | +27.11 | %−6.1 |
+  | V1802 | +33.30 | %−5.6 |
+  | V184 | +22.29 | %−5.1 |
+  | V184_AI (canlıdaki kurulum) | +26.40 | %−2.0 |
+
+  450 USDT'de USDT kârı aynı çıkıyor, çünkü sabit kasayla 100 USDT de işlemlerin neredeyse hepsine yetiyor. Oransal kasada (%20) 450 USDT ile V184_AI +121.98 USDT kazanıyor (+%27.1, maxDD %−2.4).
+- **V1802'nin önde olmasının yorumu:**
+  - 5 Ağu – 15 Eyl arasında V18.4'ün yeni filtreleri (yatay rejim, ATR %3), V18.0.2'nin aldığı kârlı işlemlerin bir kısmını da eliyor.
+  - 16 Eylül sonrasında V18.0.2'nin BTC kuralı, o dönemin kötü girişlerinin çoğunu engelliyor.
+  - Ancak 16 Eylül sonrasındaki evren o günün botunun (yatay filtreli V18.x) aldığı işlemlerle sınırlı. V18.0.2'nin o dönemde alacağı yatay rejim sinyalleri listede yok.
+  - Adil kıyas için backfill evreninde bir V18.0.2 senaryosu gerekiyor; henüz yok.
+- **Beklenti:** gerçek evrenin sonuçları iyimser, çünkü o günün botunun AI'ı ve filtreleri girişleri zaten seçmişti. Backfill ise daha kötümser.
+  - V184_AI +26.40 USDT, B_V184_AI +11.06 USDT; canlı beklenti muhtemelen ikisinin arasında.
+  - Dönemin büyük kısmı iyi geçti. 21 Eylül sonrasında gerçek işlemlerin ortalaması işlem başına %−0.47.
