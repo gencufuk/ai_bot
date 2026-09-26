@@ -181,6 +181,17 @@ def test_rsi_onbellegi_sonucu_degistirmez():
     assert moon >= 3 and kismi >= 3
 
 
+def test_bosluk_acilisinda_kismi_sonra_kalan_ayni_fiyattan():
+    """Yarım satıştan sonraki tur (canlıda 2 sn) eşiğin altındaki kalan yarıyı hemen satar."""
+    tepe = esik_fiyati(100.0, 0.045)                     # m_k %4.5 -> kısmi %3, çıkış %1.5
+    dip = esik_fiyati(100.0, 0.005)                      # mum ikisinin de altında açılıyor
+    m1 = [mum(0, 100, 100, 100, 100), mum(1, 100, tepe, 100, tepe), mum(2, dip, dip, dip, dip)]
+    s = motor().simule_et(100.0, GIRIS_MS, 1.0, False, m1, duz_m15(), TREND)
+    assert [b[3] for b in s.bacaklar] == [risk.MSG_KISMI, risk.MSG_TREND]
+    assert s.bacaklar[1][0] - s.bacaklar[0][0] == 2_000              # sonraki tur, 2 sn
+    assert s.bacaklar[0][2] == s.bacaklar[1][2] == pytest.approx(dip * (1 - 0.0005))
+
+
 def test_sinir_suresinde_kapatir():
     m1 = [mum(0, 100, 100, 100, 100)] + _duz_seri(120, esik_fiyati(100.0, 0.012))
     s = motor(max_saat=1.0).simule_et(100.0, GIRIS_MS, 1.0, False, m1, duz_m15(), TREND)
@@ -324,8 +335,9 @@ def test_giris_zamani_sure_uzatmasi_duzeltmesi(tmp_path):
     m1[gercek_i + 240:, 1:5] *= 1.05                        # 4 saat sonra fiyat %5 yukarıda (uzatma anı)
     d = vs.MumDeposu(SayanBorsa({('A/USDT', '1m'): m1}), None, simdi_ms=T0 + 10 ** 9)
     tahmini = T0 + (gercek_i + 240) * 60_000 + 20_000       # CSV: giriş zamanı uzatmada sıfırlanmış
-    t, k, h = vs.giris_bul(d, 'A/USDT', tahmini, fiyat)
-    assert (k, h) == (1, 0) and abs(t - (T0 + gercek_i * 60_000)) < 60_000
+    t, k = vs.giris_bul(d, 'A/USDT', tahmini, fiyat)
+    assert k == 1 and abs(t - (T0 + gercek_i * 60_000)) < 60_000
+    assert vs.giris_bul(d, 'A/USDT', tahmini, fiyat * 1.2) is None            # hiçbir yerde eşleşmez
 
 
 # --- uçtan uca ------------------------------------------------------------------------------
@@ -413,7 +425,7 @@ def test_uctan_uca_gercek_ve_backfill(dunya, tmp_path, monkeypatch):
 
 
 def test_gercek_senaryolari_filtreleri_uygular():
-    ortak = {'veri': 'VAR', 'kasa_tipi': 'NORMAL', 'giris_fiyat': 100.0, 'saat_farki': 0,
+    ortak = {'veri': 'VAR', 'kasa_tipi': 'NORMAL', 'giris_fiyat': 100.0, 'giris_dogrulandi': True,
              '_gercek_bacaklar': [(T0 + 60_000, 1.0, 0.01, 'X')],
              '_ESKI_SIM_bacaklar': [(T0 + 60_000, 1.0, 101.0, 'X')], '_V184_bacaklar': [(T0 + 60_000, 1.0, 101.0, 'X')]}
     tablo = pd.DataFrame([
@@ -436,9 +448,54 @@ def test_gercek_senaryolari_filtreleri_uygular():
     assert [x['sembol'] for x in sen['V184_AI']] == ['A']
     assert sen['V184'][0]['bacaklar'][0][2] == pytest.approx(risk.net_oran(100.0, 101.0, FEE))
     assert 'V184_AI' not in vs.gercek_senaryolari(tablo, None)
+    # model eğitim verisi girişlerden sonraya uzanıyorsa AI senaryosu o girişleri almaz (örneklem içi olurdu)
+    assert vs.gercek_senaryolari(tablo, Yuva(), ai_bas_ms=T0)['V184_AI'] == []
+    # giriş zamanı doğrulanamayan pozisyon hiçbir senaryoya girmez
+    tablo.loc[0, 'giris_dogrulandi'] = False
+    assert [x['sembol'] for x in vs.gercek_senaryolari(tablo, Yuva())['GERCEK']] == list('BCDEF')
 
 
 def test_komut_satiri_varsayilanlari():
     a = vs.arguman_ayristirici().parse_args([])
     assert a.baslangic == '2026-08-05' and a.kaynak == ['gercek', 'backfill'] and a.butce == [100.0, 450.0]
     assert isinstance(a, argparse.Namespace)
+
+
+def test_yalniz_veri_yok_pozisyonlarla_cokmez(dunya, tmp_path):
+    csv_yol = tmp_path / 'c.csv'
+    with open(csv_yol, 'w', encoding='utf-8') as f:
+        f.write(','.join(vs.gs.V1) + '\n')
+        f.write(','.join(str(x) for x in [str(pd.Timestamp(T0_BF + 8 * 86_400_000, unit='ms')), 'ZZZ/USDT', 'MSB',
+                                          'NORMAL', 70, 3, 1.2, 1.0, 1.01, 0.8, 0.16, '📈 TREND TAKİPLİ ÇIKIŞ', 1.0]) + '\n')
+    a = vs.arguman_ayristirici().parse_args([str(csv_yol), '--baslangic', str(pd.Timestamp(T0_BF + 6 * 86_400_000, unit='ms')),
+                                             '--kaynak', 'gercek', '--ai-model', 'yok', '--onbellek', str(tmp_path / 'o'),
+                                             '--cikti', str(tmp_path / 's')])
+    sonuc = vs.calistir(dunya, a, simdi_ms=T0_BF + 14 * 86_400_000, log=lambda *x: None)
+    assert sonuc['meta']['gercek']['veri_yok'] == 1 and sonuc['senaryolar']['GERCEK'] == []
+    assert (tmp_path / 's_rapor.txt').exists()
+
+
+def test_kartli_yeni_model_ai_senaryosu_guvenli_atlanir(tmp_path):
+    import xgboost as xgb
+    from sniper.model_karti import modeli_kartla_kaydet
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame({'Giris_RSI': rng.uniform(50, 90, 200), 'EMA15m_ATR': rng.normal(0, 1, 200)})
+    m = xgb.XGBClassifier(n_estimators=5, max_depth=2).fit(X, (X['Giris_RSI'] > 70).astype(int))
+    yol = str(tmp_path / 'core_xgboost_model.json')
+    modeli_kartla_kaydet(m, yol, {'surum': 'v3-test', 'esik': 0.5, 'ozellikler': list(X.columns),
+                                  'veri': {'donem': ['2026-03-01 00:00:00', '2026-09-20 00:00:00']}})
+    yuva, son = vs.ai_yukle(yol, log=lambda *x: None)
+    assert yuva is not None and son == vs._ms('2026-09-20')
+    # Ağustos kayıtlarında EMA15m_ATR yok -> gerçek girişlerde skor canlıdakiyle aynı olamaz
+    assert 'EMA15m_ATR' in vs.ai_uygun_mu(yuva, [{'Giris_RSI': 70.0, 'Giris_Vol_Oran': 3.0, 'Giris_ATR_Pct': 1.0}])
+    # backfill satırlarında kaynak kolonlar var (EMA15m_ATR = EMA15m_Uzaklik / ATR, botla aynı türetme)
+    assert vs.ai_uygun_mu(yuva, [{'Giris_RSI': 70.0, 'EMA15m_Uzaklik': 0.5, 'Giris_ATR_Pct': 1.0}]) is None
+    assert vs.ai_yukle('yok') == (None, None)
+
+
+def test_30_gunluk_pencereler_bitis_gununde_biter():
+    islemler = [_islem('A', i * 24 * 60, [(i * 24 * 60 + 60, 1.0, 0.05)]) for i in range(40)]
+    islemler.append(_islem('B', 39 * 24 * 60, [(45 * 24 * 60, 1.0, 0.05)]))    # bitişten 6 gün sonra kapanıyor
+    r = vs.butce_ozeti(islemler, 1000, 'sabit', 0.2, T0, T0 + 40 * 86_400_000)
+    assert r['p30_p10'] == pytest.approx(30.0) and r['p30_medyan'] == pytest.approx(30.0)    # her gün +1 USDT
+    assert r['islem'] == 41 and r['toplam_kar'] == pytest.approx(41.0)
