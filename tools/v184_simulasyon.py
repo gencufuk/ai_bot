@@ -17,9 +17,17 @@ Kaynaklar (--kaynak):
               V184        + V18.4 giriş filtreleri: BTC onayı (EMA200 histerezisi, ani çöküş koruması),
                           TREND rejimi (BTC 15m ADX >= 20), ATR <= %3
               V184_AI     + core model vetosu (model dosyası varsa)
-  backfill  Sinyaller geçmiş 15m mumlardan V18.4 kuralıyla yeniden üretilir (kapalı mum modu; radar:
-            24s hacmi 12M+ olan en çok yükselen 10 parite). "Bot baştan V18.4 olsaydı" sorusunun yaklaşık cevabı.
-              B_V184, B_REJIMSIZ (yatay rejim filtresi olmadan), B_V184_AI
+  backfill  Sinyaller geçmiş 15m mumlardan yeniden üretilir (kapalı mum modu; radar: 24s hacmi 12M+ olan en çok
+            yükselen 10 parite). Ağustos botu ile V18.4 aynı sinyal kuralını ve radarı kullanır, yalnız ATR sınırı
+            farklıdır: sinyaller ATR <= %4 ve BTC durumundan bağımsız üretilir, senaryolar AYNI havuzu süzer.
+            "Bot baştan bu ayarla çalışsaydı" sorusunun yaklaşık cevabı.
+              B_V184         BTC onayı (histerezis), TREND rejimi, ATR <= %3, V18.4 çıkışı
+              B_REJIMSIZ     B_V184, yatay rejim filtresi olmadan
+              B_V184_AI      B_V184 + core model vetosu (canlıdaki kurulum)
+              B_AI_ATR4      B_V184_AI, ATR sınırı %4
+              B_AI_REJIMSIZ  B_V184_AI, yatay rejim filtresi olmadan
+              B_V1802        Ağustos botu: BTC > EMA200 (histerezissiz) + ani çöküş koruması, ATR <= %4,
+                             eski core model vetosu, V18.0.2 çıkışı
 
 Bütçe: her senaryo, botun kurallarıyla oynatılır: aynı coinde tek pozisyon, tam çıkıştan sonra 1 saat
 bekleme, üst üste 2 stopta 24 saat kara liste, serbest bakiye >= kasa x 1.01. Kısmi satışın parası satış
@@ -46,6 +54,7 @@ Kullanım (sunucuda, bot çalışırken de olur; API anahtarı gerekmez, yalnız
   /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05 --limit 20      # 1 dk'lık deneme
 İndirilen mumlar sim_onbellek/ klasöründe tutulur; ikinci çalıştırma çok daha hızlıdır.
 Çıktılar: v184_sim_rapor.txt (özet), v184_sim_rapor.json, v184_sim_pozisyonlar.csv, v184_sim_backfill.csv
+Yalnız piyasa taraması, eski raporu ezmeden:  ... --kaynak backfill --cikti /root/v184_sim_b
 """
 import argparse
 import datetime
@@ -106,8 +115,13 @@ SENARYO_ACIKLAMA = {
     'V184_AI': 'V184 + core model vetosu',
     'B_V184': 'backfill sinyalleri, V18.4',
     'B_REJIMSIZ': 'backfill, yatay rejim filtresi yok',
-    'B_V184_AI': 'backfill, V18.4 + AI',
+    'B_V184_AI': 'backfill, V18.4 + AI (canlıdaki kurulum)',
+    'B_AI_ATR4': 'backfill, V18.4 + AI, ATR sınırı %4',
+    'B_AI_REJIMSIZ': 'backfill, V18.4 + AI, yatay rejim filtresi yok',
+    'B_V1802': 'backfill, Ağustos botu (V18.0.2 giriş filtreleri + çıkışı)',
 }
+B_SENARYOLAR = ['B_V184', 'B_REJIMSIZ', 'B_V184_AI', 'B_AI_ATR4', 'B_AI_REJIMSIZ', 'B_V1802']
+B_AI_SENARYOLARI = ('B_V184_AI', 'B_AI_ATR4', 'B_AI_REJIMSIZ')
 
 
 def _ms(ts) -> int:
@@ -745,7 +759,10 @@ def gercek_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, L
 # Kaynak 2: backfill sinyalleri
 # ------------------------------------------------------------------------------------------
 def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: CikisMotoru, yuva,
-                    semboller=None, log=print):
+                    semboller=None, log=print, motor_eski: Optional[CikisMotoru] = None):
+    """Sinyaller Ağustos kapsamında üretilir (ATR <= %4, BTC durumundan bağımsız); senaryo filtreleri
+    backfill_senaryolari'nda uygulanır. V18.4 çıkışı V18.4 BTC onayı olan sinyallere, V18.0.2 çıkışı
+    (motor_eski) Ağustos botunun gireceği sinyallere (eski BTC kuralı + eski AI) simüle edilir."""
     semboller = semboller or bf.evren_sec(ex, evren_n)
     veri_bas = bas_ms - bf.ISINMA_MUM * MUM_15M_MS
     seriler15 = {}
@@ -758,7 +775,7 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
             log(f"  15m veri: {n}/{len(semboller)} sembol ({depo.istek} API isteği)")
     seriler15 = {s: d for s, d in seriler15.items() if len(d) > bf.PENCERE_15M}
     ilk_n, genislik = bf.radar_paneli({s: d[d['ts'] < bit_ms] for s, d in seriler15.items()})
-    ayar = SinyalAyarlari(max_atr_pct=MAX_ATR_V184 / 100)
+    ayar = SinyalAyarlari(max_atr_pct=max(MAX_ATR_V184, MAX_ATR_V1802) / 100)
     sinyaller = []
     for s, df15 in seriler15.items():
         df15_sinyal = df15[df15['ts'] + MUM_15M_MS <= bit_ms].reset_index(drop=True)
@@ -766,61 +783,164 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
             df1h = depo.getir_df(s, '1h', veri_bas - bf.PENCERE_1H * SAAT_MS, bit_ms + SAAT_MS)
         except VeriYok:
             continue
-        for x in bf.sinyalleri_uret(s, df15_sinyal, df1h, btc.df, ilk_n, genislik, bas_ms, False, ayar):
+        for x in bf.sinyalleri_uret(s, df15_sinyal, df1h, btc.df, ilk_n, genislik, bas_ms, True, ayar):
             i = x.pop('_i')
             x['degisim_24s'] = float(df15_sinyal['c'].iloc[i] / df15_sinyal['c'].iloc[i - 96] - 1) if i >= 96 else 0.0
             sinyaller.append(x)
-    log(f"  {len(sinyaller)} sinyal üretildi ({sum(x['Rejim'] == 'TREND' for x in sinyaller)} TREND rejiminde); "
-        f"çıkışlar simüle ediliyor...")
+    v184 = [x for x in sinyaller if x.get('BTC_OK') and depo_etiket.sayi(x.get('Giris_ATR_Pct'), 99.0) <= MAX_ATR_V184]
+    log(f"  {len(sinyaller)} sinyal üretildi (ATR <= %{MAX_ATR_V1802:.0f}, BTC durumundan bağımsız); V18.4 kuralına "
+        f"uyan {len(v184)} ({sum(x['Rejim'] == 'TREND' for x in v184)} TREND rejiminde); çıkışlar simüle ediliyor...")
     if yuva is not None:
         neden = ai_uygun_mu(yuva, sinyaller[:2000])
         if neden:
             log(f"⚠️ Backfill AI senaryosu atlandı: {neden}")
             yuva = None
+    # Ağustos botunun AI'ı yalnız kartsız (Ağustos'ta kullanılan eski) modeldir; yeni kartlı model uygulanmaz.
+    eski_ai = yuva if (yuva is not None and not getattr(yuva, 'kart', None)) else None
     satirlar = []
     for n, x in enumerate(sorted(sinyaller, key=lambda z: (z['Ts'], -z['degisim_24s'])), 1):
+        if n % 200 == 0:
+            log(f"  {n}/{len(sinyaller)} sinyal ({depo.istek} API isteği)")
         sym, ts = x['Sembol'], int(x['Ts'])
+        ai_skor = ai_skoru(yuva, {k: x.get(k) for k in x}) if yuva else None
+        btc_ok, btc_ok_eski = bool(x.get('BTC_OK')), bool(btc.eski_ok(ts))
+        eski_ai_gecer = eski_ai is None or (ai_skor is not None and not eski_ai.blokla_mi(ai_skor))
+        gerek = {'V184': (motor, btc_ok),
+                 'ESKI': (motor_eski, motor_eski is not None and btc_ok_eski and eski_ai_gecer)}
+        if not any(g for _, g in gerek.values()):
+            continue
         giris = float(x['Fiyat']) * (1 + ALIM_KAYMASI)
         balina = depo_etiket.is_whale_tahmini(x)
         d15 = seriler15[sym]
         m15 = d15[(d15['ts'] >= ts - 101 * MUM_15M_MS)].to_numpy(dtype=float)
-        try:
-            s = simule_parcali(motor, depo, sym, giris, ts, depo_etiket.sayi(x.get('Giris_ATR_Pct'), 2.5), balina,
-                               m15, btc.rejim_at)
-        except VeriYok:
-            s = None
-        if s is None:
-            continue
-        satirlar.append({'sembol': sym, 'giris_ms': ts, 'giris': _tarih(ts), 'giris_fiyat': giris,
-                         'kasa_tipi': 'BALİNA' if balina else 'NORMAL', 'rejim': x['Rejim'],
-                         'atr_pct': x.get('Giris_ATR_Pct'), 'rsi': x.get('Giris_RSI'), 'vol_oran': x.get('Giris_Vol_Oran'),
-                         'degisim_24s': x['degisim_24s'],
-                         'ai_skor': ai_skoru(yuva, {k: x.get(k) for k in x}) if yuva else None,
-                         'V184_getiri': s.getiri, 'V184_cikislar': s.cikislar, 'V184_durum': s.durum,
-                         'V184_sure_saat': (s.cikis_ms - ts) / SAAT_MS, '_V184_bacaklar': s.bacaklar})
-        if n % 200 == 0:
-            log(f"  {n}/{len(sinyaller)} sinyal ({depo.istek} API isteği)")
+        satir = {'sembol': sym, 'giris_ms': ts, 'giris': _tarih(ts), 'giris_fiyat': giris,
+                 'kasa_tipi': 'BALİNA' if balina else 'NORMAL', 'rejim': x['Rejim'], 'btc_ok': btc_ok,
+                 'btc_ok_eski': btc_ok_eski, 'atr_pct': x.get('Giris_ATR_Pct'), 'rsi': x.get('Giris_RSI'),
+                 'vol_oran': x.get('Giris_Vol_Oran'), 'degisim_24s': x['degisim_24s'], 'ai_skor': ai_skor}
+        simule = False
+        for ad, (m, g) in gerek.items():
+            if not g:
+                continue
+            try:
+                s = simule_parcali(m, depo, sym, giris, ts, depo_etiket.sayi(x.get('Giris_ATR_Pct'), 2.5), balina,
+                                   m15, btc.rejim_at)
+            except VeriYok:
+                s = None
+            if s is None:
+                continue
+            simule = True
+            satir.update({f'{ad}_getiri': s.getiri, f'{ad}_cikislar': s.cikislar, f'{ad}_durum': s.durum,
+                          f'{ad}_sure_saat': (s.cikis_ms - ts) / SAAT_MS, f'_{ad}_bacaklar': s.bacaklar})
+        if simule:
+            satirlar.append(satir)
     return pd.DataFrame(satirlar), yuva
 
 
 def backfill_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, List[dict]]:
-    sen = {'B_V184': [], 'B_REJIMSIZ': [], 'B_V184_AI': []}
+    """Bütün backfill senaryoları AYNI sinyal havuzunu süzer (bkz. modül açıklaması). V18.4 senaryoları
+    V18.4 çıkışını, B_V1802 V18.0.2 çıkışını kullanır. B_V1802'nin AI'ı yalnız kartsız eski modeldir."""
+    sen = {ad: [] for ad in B_SENARYOLAR}
     if yuva is None:
-        sen.pop('B_V184_AI')
+        for ad in B_AI_SENARYOLARI:
+            sen.pop(ad)
+    eski_ai = yuva if (yuva is not None and not getattr(yuva, 'kart', None)) else None
     if tablo.empty:
         return sen
+
+    def islem(r, bacaklar):
+        return {'sembol': r['sembol'], 'giris_ms': int(r['giris_ms']), 'kasa_tipi': r['kasa_tipi'],
+                'bacaklar': [(x[0], x[1], risk.net_oran(r['giris_fiyat'], x[2], RISK_V184.fee_rate)) for x in bacaklar],
+                'son_mesaj': bacaklar[-1][3]}
+
     for _, r in tablo.sort_values(['giris_ms', 'degisim_24s'], ascending=[True, False]).iterrows():
-        b = r['_V184_bacaklar']
-        islem = {'sembol': r['sembol'], 'giris_ms': int(r['giris_ms']), 'kasa_tipi': r['kasa_tipi'],
-                 'bacaklar': [(x[0], x[1], risk.net_oran(r['giris_fiyat'], x[2], RISK_V184.fee_rate)) for x in b],
-                 'son_mesaj': b[-1][3]}
-        sen['B_REJIMSIZ'].append(islem)
-        if r['rejim'] == 'TREND':
-            sen['B_V184'].append(islem)
-            if (yuva is not None and pd.notna(r['ai_skor']) and not yuva.blokla_mi(float(r['ai_skor']))
-                    and (ai_bas_ms is None or r['giris_ms'] > ai_bas_ms)):
-                sen['B_V184_AI'].append(islem)
+        skor = r.get('ai_skor')
+        skor = float(skor) if skor is not None and pd.notna(skor) else None
+        b = r.get('_V184_bacaklar')
+        if isinstance(b, list) and b and _dogru_mu(r.get('btc_ok')):
+            x = islem(r, b)
+            atr3, trend = r['atr_pct'] <= MAX_ATR_V184, r['rejim'] == 'TREND'
+            ai = (yuva is not None and skor is not None and not yuva.blokla_mi(skor)
+                  and (ai_bas_ms is None or r['giris_ms'] > ai_bas_ms))
+            if atr3:
+                sen['B_REJIMSIZ'].append(x)
+                if trend:
+                    sen['B_V184'].append(x)
+            if ai:
+                if atr3 and trend:
+                    sen['B_V184_AI'].append(x)
+                if trend and r['atr_pct'] <= MAX_ATR_V1802:
+                    sen['B_AI_ATR4'].append(x)
+                if atr3:
+                    sen['B_AI_REJIMSIZ'].append(x)
+        e = r.get('_ESKI_bacaklar')
+        if (isinstance(e, list) and e and _dogru_mu(r.get('btc_ok_eski')) and r['atr_pct'] <= MAX_ATR_V1802
+                and (eski_ai is None or (skor is not None and not eski_ai.blokla_mi(skor)))):
+            sen['B_V1802'].append(islem(r, e))
     return sen
+
+
+def _islem_getirisi(islem) -> float:
+    return float(sum(p * g for _, p, g in islem['bacaklar']))
+
+
+def _gun_bootstrap(seriler, n=2000, tohum=0):
+    """Gün bloklu bootstrap: aynı gündeki sinyaller (aynı piyasa hareketi) birlikte yeniden örneklenir.
+    seriler: ad -> (getiriler, gün numaraları). Bütün adlar AYNI gün örnekleriyle: farkların GA'sı doğrudan."""
+    dolu = [g for _, g in seriler.values() if len(g)]
+    if not dolu:
+        return {}
+    gunler = np.unique(np.concatenate(dolu))
+    rng = np.random.default_rng(tohum)
+    w = rng.multinomial(len(gunler), np.full(len(gunler), 1.0 / len(gunler)), size=n).astype(float)
+    sonuc = {}
+    for ad, (v, g) in seriler.items():
+        yer = np.searchsorted(gunler, g)
+        top = np.bincount(yer, weights=v, minlength=len(gunler))
+        say = np.bincount(yer, minlength=len(gunler)).astype(float)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            sonuc[ad] = (w @ top) / (w @ say)
+    return sonuc
+
+
+def _orneklem_ga(ornek):
+    ornek = np.asarray(ornek, dtype=float)
+    ornek = ornek[np.isfinite(ornek)]
+    if len(ornek) < 100:
+        return [None, None]
+    return [float(np.quantile(ornek, 0.025)), float(np.quantile(ornek, 0.975))]
+
+
+def backfill_karsilastirma(senaryolar) -> dict:
+    """Backfill senaryolarının sinyal başı sonucu (bütçe kuralları olmadan, her sinyal tek başına) ve canlıdaki
+    kuruluma (B_V184_AI) göre: ATR %3-4 ve yatay rejim sinyallerinin kendi ortalaması, her senaryonun farkı."""
+    b = {ad: v for ad, v in senaryolar.items() if ad.startswith('B_') and v}
+    if not b:
+        return {}
+
+    def seri(islemler):
+        return (np.array([_islem_getirisi(x) for x in islemler]), np.array([x['giris_ms'] // GUN_MS for x in islemler]))
+
+    seriler = {ad: seri(v) for ad, v in b.items()}
+    eklenen = {}
+    taban = b.get('B_V184_AI')
+    if taban:
+        t = {(x['sembol'], x['giris_ms']) for x in taban}
+        for ad, etiket in (('B_AI_ATR4', 'atr_3_4'), ('B_AI_REJIMSIZ', 'yatay_rejim')):
+            fazla = [x for x in b.get(ad, []) if (x['sembol'], x['giris_ms']) not in t]
+            if fazla:
+                seriler[etiket], eklenen[etiket] = seri(fazla), ad
+    ornek = _gun_bootstrap(seriler)
+    ozet = {'senaryolar': {}, 'eklenen': {}, 'fark': {}}
+    for ad, (v, _g) in seriler.items():
+        kayit = {'n': int(len(v)), 'ort': float(v.mean()), 'kazanan': float((v > 0).mean()),
+                 'ga': _orneklem_ga(ornek[ad])}
+        (ozet['eklenen'] if ad in eklenen else ozet['senaryolar'])[ad] = kayit
+    if taban:
+        for ad in b:
+            if ad != 'B_V184_AI':
+                ozet['fark'][ad] = {'ort': float(seriler[ad][0].mean() - seriler['B_V184_AI'][0].mean()),
+                                    'ga': _orneklem_ga(ornek[ad] - ornek['B_V184_AI'])}
+    return ozet
 
 
 # ------------------------------------------------------------------------------------------
@@ -901,7 +1021,7 @@ def cikis_etkisi(tablo: pd.DataFrame) -> dict:
     return sonuc
 
 
-def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu) -> str:
+def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu, backfill=None) -> str:
     y = [f"V18.4 GEÇMİŞ SİMÜLASYONU | {meta['baslangic']} → {meta['bitis']} | {meta['olusturma']}",
          f"Ayarlar: kayma seviye %{meta['kayma_seviye'] * 100:.2f} / zaman %{meta['kayma_zaman'] * 100:.2f} | "
          f"max süre {meta['max_saat']:.0f} saat | AI: {meta['ai'] or 'yok'} | API isteği: {meta['istek']}"]
@@ -937,16 +1057,31 @@ def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu) -> str:
                      f"%95 GA {ga_txt}")
     y += ['', "4) BÜTÇE SONUÇLARI (botun kurallarıyla). ilk30g: başlangıçtan 30 gün içinde kapanan işlemlerin kârı; "
               "maxDD gerçekleşmiş nakit + açık pozisyon maliyeti üzerinden (açık pozisyonun anlık zararı hariç)",
-          f"   {'senaryo':11s} {'bütçe':>5s} {'mod':8s} {'işlem':>5s} {'atlanan':>7s} {'toplam':>8s} {'getiri':>7s} "
+          f"   {'senaryo':13s} {'bütçe':>5s} {'mod':8s} {'işlem':>5s} {'atlanan':>7s} {'toplam':>8s} {'getiri':>7s} "
           f"{'maxDD':>6s} {'ilk30g':>7s} {'30g medyan':>10s} {'30g %10':>8s} {'30g %90':>8s}"]
     for r in butce_tablosu:
         f = (lambda v: f"{v:+.2f}" if v is not None else '  -')
-        y.append(f"   {r['senaryo']:11s} {r['butce']:5.0f} {r['mod']:8s} {r['islem']:5d} {sum(r['atlanan'].values()):7d} "
+        y.append(f"   {r['senaryo']:13s} {r['butce']:5.0f} {r['mod']:8s} {r['islem']:5d} {sum(r['atlanan'].values()):7d} "
                  f"{r['toplam_kar']:+8.2f} {r['getiri_pct']:+6.1f}% {r['max_dusus_pct']:5.1f}% {r['ilk_30_gun_kar']:+7.2f} "
                  f"{f(r['p30_medyan']):>10s} {f(r['p30_p10']):>8s} {f(r['p30_p90']):>8s}")
     sim_sonu = {r['senaryo']: r['sim_sonu_kapatilan'] for r in butce_tablosu if r.get('sim_sonu_kapatilan')}
     if sim_sonu:
         y.append(f"   Süre sınırında/veri sonunda son fiyattan kapatılan pozisyon: {sim_sonu}")
+    if backfill:
+        ga = lambda g: f"[{_pct(g[0])}, {_pct(g[1])}]"  # noqa: E731
+        y += ['', "5) PİYASA TARAMASI (backfill) — sinyal başı net getiri, bütçe kuralları olmadan (her sinyal tek "
+                  "başına; %95 GA gün bazlı bootstrap)",
+              f"   {'senaryo':13s} {'sinyal':>6s} {'ort.':>8s} {'kazanan':>8s}   {'%95 GA':22s} canlı kuruluma "
+              f"(B_V184_AI) göre fark"]
+        for ad, k in backfill['senaryolar'].items():
+            f = backfill['fark'].get(ad)
+            fark = f"{_pct(f['ort'])} {ga(f['ga'])}" if f else ('(taban)' if ad == 'B_V184_AI' else '')
+            y.append(f"   {ad:13s} {k['n']:6d} {_pct(k['ort']):>8s} {k['kazanan'] * 100:7.0f}%   {ga(k['ga']):22s} {fark}")
+        adlar = {'atr_3_4': 'ATR %3-4 arası sinyaller (B_AI_ATR4 ile eklenen)',
+                 'yatay_rejim': 'yatay rejim sinyalleri (B_AI_REJIMSIZ ile eklenen)'}
+        for ad, k in backfill['eklenen'].items():
+            y.append(f"   {adlar.get(ad, ad)}: n={k['n']} | ort {_pct(k['ort'])} {ga(k['ga'])} | "
+                     f"kazanan %{k['kazanan'] * 100:.0f}")
     y += ['', 'Senaryolar: ' + ' | '.join(f"{k}: {v}" for k, v in SENARYO_ACIKLAMA.items()
                                           if any(r['senaryo'] == k for r in butce_tablosu))]
     return '\n'.join(y)
@@ -1024,7 +1159,8 @@ def calistir(ex, a, simdi_ms=None, log=print):
     if 'backfill' in a.kaynak:
         log(f"Backfill: evren seçiliyor (en hacimli {a.evren} USDT paritesi) ve sinyaller üretiliyor...")
         try:
-            btablo, yuva_b = backfill_kaynak(depo, ex, btc, bas_ms, bit_ms, a.evren, motor_v184, yuva, log=log)
+            btablo, yuva_b = backfill_kaynak(depo, ex, btc, bas_ms, bit_ms, a.evren, motor_v184, yuva, log=log,
+                                             motor_eski=motorlar['ESKI_SIM'])
             senaryolar.update(backfill_senaryolari(btablo, yuva_b, ai_egitim_son))
             yazilacak.append((btablo, a.cikti + '_backfill.csv'))
         except Exception as e:  # noqa: BLE001 - gerçek kaynak raporu yine yazılsın
@@ -1037,18 +1173,20 @@ def calistir(ex, a, simdi_ms=None, log=print):
         for mod in a.mod:
             for b in a.butce:
                 butce_tablosu.append({'senaryo': ad, **butce_ozeti(islemler, b, mod, a.oran, bas_ms, bit_ms)})
-    metin = rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu)
+    bozet = backfill_karsilastirma(senaryolar)
+    metin = rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu, bozet)
     for tablo_, yol in yazilacak:
         tablo_.drop(columns=[c for c in tablo_.columns if c.startswith('_')]).to_csv(yol, index=False)
     with open(a.cikti + '_rapor.txt', 'w', encoding='utf-8') as f:
         f.write(metin + '\n')
     with open(a.cikti + '_rapor.json', 'w', encoding='utf-8') as f:
         json.dump({'meta': meta, 'dogrulama': dogrulama, 'filtreler': filtreler, 'cikis_etkisi': etki,
-                   'butce': butce_tablosu}, f, ensure_ascii=False, indent=1, default=str)
+                   'butce': butce_tablosu, 'backfill_karsilastirma': bozet}, f, ensure_ascii=False, indent=1,
+                  default=str)
     log('\n' + metin)
     log(f"\nÇıktılar: {a.cikti}_rapor.txt, {a.cikti}_rapor.json" + ''.join(f", {y}" for _, y in yazilacak))
     return {'meta': meta, 'dogrulama': dogrulama, 'filtreler': filtreler, 'cikis_etkisi': etki,
-            'butce': butce_tablosu, 'senaryolar': senaryolar}
+            'butce': butce_tablosu, 'senaryolar': senaryolar, 'backfill_karsilastirma': bozet}
 
 
 def arguman_ayristirici():

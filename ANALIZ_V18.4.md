@@ -350,7 +350,11 @@ Binance'ten 1 dakikalık fiyat geçmişini indirir ve V18.4'ün kararlarını ca
 | `V184_CIKIS` | aynı girişler, V18.4 çıkış mantığı |
 | `V184` | + V18.4 giriş filtreleri: BTC onayı, TREND rejimi, ATR ≤ %3 |
 | `V184_AI` | + core model vetosu |
-| `B_V184`, `B_REJIMSIZ`, `B_V184_AI` | sinyaller geçmiş mumlardan V18.4 kuralıyla yeniden üretilir (kapalı mum modu, radar: 12M+ hacimli en çok yükselen 10 parite). "Bot baştan V18.4 olsaydı" sorusunun yaklaşık cevabı |
+| `B_...` (backfill) | sinyaller geçmiş mumlardan yeniden üretilir (kapalı mum modu, radar: 12M+ hacimli en çok yükselen 10 parite). Ağustos botu ile V18.4 aynı sinyal kuralını ve radarı kullanır, yalnız ATR sınırı farklı; sinyaller ATR ≤ %4 ve BTC durumundan bağımsız üretilir, bütün senaryolar **aynı havuzu** süzer. "Bot baştan bu ayarla çalışsaydı" sorusunun yaklaşık cevabı |
+| `B_V184` / `B_REJIMSIZ` | V18.4 (BTC histerezisi, TREND, ATR ≤ %3, V18.4 çıkışı) / yatay rejim filtresi olmadan |
+| `B_V184_AI` | `B_V184` + core model vetosu: canlıdaki kurulum, diğerlerinin karşılaştırıldığı taban |
+| `B_AI_ATR4` / `B_AI_REJIMSIZ` | `B_V184_AI`, ATR sınırı %4 / yatay rejim filtresi olmadan |
+| `B_V1802` | Ağustos botu: BTC > EMA200 histerezissiz + ani çöküş, ATR ≤ %4, eski core model vetosu, V18.0.2 çıkışı |
 
 Her senaryo 100/450 USDT ve sabit/oransal kasa için botun kurallarıyla oynatılır: aynı coinde tek pozisyon, tam çıkıştan sonra 1 saat bekleme, üst üste 2 stopta 24 saat kara liste, bakiye kontrolü. Kısmi satışın parası satış anında kasaya döner.
 
@@ -358,7 +362,7 @@ Her senaryo 100/450 USDT ve sabit/oransal kasa için botun kurallarıyla oynatı
 
 **V18.0.2 sadakati:** kullanıcının Ağustos commit'indeki karar kodu teste satır satır aktarıldı. `ESKI_SIM` ayarlarıyla çalışan motor 20.000 rastgele durumun hepsinde aynı kararı veriyor (`test_eski_ayarlar_v1802_ile_ayni_karari_verir`).
 
-Testler (`tests/test_v184_simulasyon.py`, 30 test): her çıkış tipi için elle kurulmuş senaryolar, 80 rastgele fiyat yolunda motorun 200 kat yoğun yolla aynı kararı verdiği diferansiyel test, RSI önbelleğinin sonucu değiştirmediği test, bütçe kuralları, önbellek, AI kısıtları ve sahte borsayla uçtan uca çalıştırma; pandas 2.3 ve 3.0'da geçiyor.
+Testler (`tests/test_v184_simulasyon.py`, 33 test): her çıkış tipi için elle kurulmuş senaryolar, 80 rastgele fiyat yolunda motorun 200 kat yoğun yolla aynı kararı verdiği diferansiyel test, RSI önbelleğinin sonucu değiştirmediği test, bütçe kuralları, önbellek, AI kısıtları ve sahte borsayla uçtan uca çalıştırma; pandas 2.3 ve 3.0'da geçiyor.
 
 **Bağımsız inceleme:** engelleyici hata bulunmadı. Motor, aynı fiyat yolunda 2 saniyelik canlı tarama temposunu taklit eden bir referansla (RSI moon bag, yatay rejim momentumu ve 4 saat zaman aşımı açık) karşılaştırıldı: işlem başına ortalama fark +%0.01–0.03, 1000 yolda çıkış tipleri ~%100 aynı. Eski sürümün süre uzatmalı geçmişi sahte olarak üretilip araca verildiğinde 53/53 giriş zamanı bulundu, Ağustos-sim ile "gerçek" arasındaki fark ort. %0.03. İncelemenin bulduğu düzeltilmiş noktalar: saat dilimi tahmini yanlış eşleşme üretebiliyordu (kaldırıldı; `--saat-farki` ile tüm kayıtlara uygulanır), doğrulanamayan girişler senaryolara giriyordu, çıkış etkisinin güven aralığı simülatör hatasını içeriyordu (artık V18.4 − Ağustos-sim eşleştirilmiş farkı), 30 günlük pencereler bitişten sonraki boş günleri sayıyordu, yeni trainer modeli gelince AI senaryosu eksik feature'la skorlanabilirdi, hiç verisi olmayan girdi setinde çöküyordu.
 
@@ -370,7 +374,7 @@ cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-0
 cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-05              # tam: ~10-20 dk
 /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-07 --bitis 2026-09-06 --kaynak gercek   # önbellekten, hızlı
 ```
-Çıktı `v184_sim_rapor.txt`: (1) simülatör doğrulaması, (2) filtrelerin gerçek girişlerdeki etkisi, (3) çıkış mantığının etkisi (dönem bazında, %95 güven aralığıyla), (4) her senaryo için 100/450 USDT sonuçları. İndirilen veri `sim_onbellek/` klasöründe kalır.
+Çıktı `v184_sim_rapor.txt`: (1) simülatör doğrulaması, (2) filtrelerin gerçek girişlerdeki etkisi, (3) çıkış mantığının etkisi (dönem bazında, %95 güven aralığıyla), (4) her senaryo için 100/450 USDT sonuçları, (5) backfill senaryolarının sinyal başı sonucu ve canlı kuruluma (`B_V184_AI`) göre farkı; ATR %3–4 ve yatay rejim sinyallerinin kendi ortalaması (gün bazlı bootstrap güven aralığıyla). Yalnız backfill, eski raporu ezmeden: `--kaynak backfill --cikti /root/v184_sim_b`. İndirilen veri `sim_onbellek/` klasöründe kalır.
 
 ### 10.4 Sunucu sonuçları (26 Eylül: 5 Ağustos – 26 Eylül, 312 gerçek pozisyon + 250 coinlik backfill)
 Rapor ve log: `veri/sim_2026-09-26/`. Kullanılan AI: canlıdaki eski core model (kartsız, 0.65 eşik; ilk 68 işlemle, 31 May–15 Haz eğitildi, yani bu dönem için örneklem dışı).

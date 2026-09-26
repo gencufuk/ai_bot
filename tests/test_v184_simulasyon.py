@@ -405,8 +405,15 @@ def test_uctan_uca_gercek_ve_backfill(dunya, tmp_path, monkeypatch):
     for yol in ('sim_rapor.txt', 'sim_rapor.json', 'sim_pozisyonlar.csv', 'sim_backfill.csv'):
         assert (tmp_path / yol).exists(), yol
     rapor = json.loads((tmp_path / 'sim_rapor.json').read_text(encoding='utf-8'))
-    assert {r['senaryo'] for r in rapor['butce']} >= {'GERCEK', 'V184', 'B_V184'}
-    assert 'SİMÜLATÖR DOĞRULAMASI' in (tmp_path / 'sim_rapor.txt').read_text(encoding='utf-8')
+    assert {r['senaryo'] for r in rapor['butce']} >= {'GERCEK', 'V184', 'B_V184', 'B_V1802'}
+    metin = (tmp_path / 'sim_rapor.txt').read_text(encoding='utf-8')
+    assert 'SİMÜLATÖR DOĞRULAMASI' in metin and 'PİYASA TARAMASI' in metin
+    # AI modeli yok: AI'lı backfill senaryoları yok, Ağustos botu AI'sız çalışır ve kendi çıkışını kullanır
+    assert not set(sonuc['senaryolar']) & set(vs.B_AI_SENARYOLARI)
+    bt = pd.read_csv(tmp_path / 'sim_backfill.csv')
+    assert {'btc_ok', 'btc_ok_eski', 'V184_getiri', 'ESKI_getiri'} <= set(bt.columns)
+    assert len(sonuc['senaryolar']['B_V1802']) == int((bt['btc_ok_eski'].astype(bool) & bt['ESKI_getiri'].notna()).sum())
+    assert rapor['backfill_karsilastirma']['senaryolar']['B_V184']['n'] == len(sonuc['senaryolar']['B_V184'])
     poz = pd.read_csv(tmp_path / 'sim_pozisyonlar.csv')
     assert not any(c.startswith('_') for c in poz.columns)
     # önbellekten ikinci çalıştırma: yeni API isteği yok
@@ -617,3 +624,97 @@ def test_btc_eski_kurali_histerezissiz_ve_cokus_korumali():
     assert b.eski_ok(kap(685)) is True                      # EMA200 üstünde
     assert b.eski_ok(kap(691)) is False                     # 110 -> 108: %1.8 ani düşüş
     assert b.eski_ok(kap(699)) is True
+
+
+def _b_satir(sembol, atr, rejim, btc_ok, btc_ok_eski, skor, v184=True, eski=True):
+    b = [(T0 + 60_000, 1.0, 101.0, 'V')]
+    e = [(T0 + 60_000, 1.0, 102.0, 'E')]
+    return {'sembol': sembol, 'giris_ms': T0, 'giris_fiyat': 100.0, 'kasa_tipi': 'NORMAL', 'degisim_24s': 0.0,
+            'atr_pct': atr, 'rejim': rejim, 'btc_ok': btc_ok, 'btc_ok_eski': btc_ok_eski, 'ai_skor': skor,
+            '_V184_bacaklar': b if v184 else float('nan'), '_ESKI_bacaklar': e if eski else float('nan')}
+
+
+def test_backfill_senaryolari_ayni_havuzu_suzer():
+    """Altı senaryo aynı sinyal havuzunu süzer: V18.4 (ATR %3, TREND, histerezisli BTC), ATR %4 ve yatay rejim
+    varyantları, Ağustos botu (histerezissiz BTC, ATR %4, eski AI, V18.0.2 çıkışı)."""
+    tablo = pd.DataFrame([
+        _b_satir('A', 2.0, 'TREND', True, True, 0.9),     # her yerde
+        _b_satir('B', 3.5, 'TREND', True, True, 0.9),     # ATR %3-4: yalnız ATR4 ve Ağustos
+        _b_satir('C', 2.0, 'YATAY', True, True, 0.9),     # yatay: rejimsizler ve Ağustos
+        _b_satir('D', 2.0, 'TREND', True, True, 0.3),     # AI reddi
+        _b_satir('E', 2.0, 'TREND', False, True, 0.9, v184=False),   # yalnız eski BTC kuralı onaylı
+        _b_satir('F', 2.0, 'TREND', True, False, 0.9, eski=False),   # yalnız V18.4 BTC kuralı onaylı
+        _b_satir('G', 3.9, 'YATAY', True, True, 0.9),     # ATR4 yatay: ATR4'e girmez (TREND şartı), Ağustos'a girer
+    ])
+
+    class Eski:
+        kart, esik = None, 0.65
+
+        def blokla_mi(self, s):
+            return s < self.esik
+
+    class Yeni(Eski):
+        kart = {'surum': 'v3'}
+    sen = vs.backfill_senaryolari(tablo, Eski())
+    ad = lambda k: [x['sembol'] for x in sen[k]]  # noqa: E731
+    assert ad('B_REJIMSIZ') == ['A', 'C', 'D', 'F']
+    assert ad('B_V184') == ['A', 'D', 'F']
+    assert ad('B_V184_AI') == ['A', 'F']
+    assert ad('B_AI_ATR4') == ['A', 'B', 'F']
+    assert ad('B_AI_REJIMSIZ') == ['A', 'C', 'F']
+    assert ad('B_V1802') == ['A', 'B', 'C', 'E', 'G']
+    # V18.4 senaryoları V18.4 çıkışını, Ağustos botu V18.0.2 çıkışını kullanır
+    assert sen['B_V184'][0]['bacaklar'][0][2] == pytest.approx(risk.net_oran(100.0, 101.0, FEE))
+    assert sen['B_V1802'][0]['bacaklar'][0][2] == pytest.approx(risk.net_oran(100.0, 102.0, FEE))
+    # AI yoksa AI'lı senaryolar yok, Ağustos botu AI'sız; yeni (kartlı) model Ağustos botuna uygulanmaz
+    yok = vs.backfill_senaryolari(tablo, None)
+    assert not set(yok) & set(vs.B_AI_SENARYOLARI)
+    assert [x['sembol'] for x in yok['B_V1802']] == ['A', 'B', 'C', 'D', 'E', 'G']
+    assert [x['sembol'] for x in vs.backfill_senaryolari(tablo, Yeni())['B_V1802']] == ['A', 'B', 'C', 'D', 'E', 'G']
+
+
+def test_backfill_karsilastirmasi_eklenen_sinyalleri_ayri_olcer():
+    def islem(sembol, gun, getiri):
+        return {'sembol': sembol, 'giris_ms': T0 + gun * vs.GUN_MS, 'kasa_tipi': 'NORMAL',
+                'bacaklar': [(0, 0.5, getiri), (1, 0.5, getiri)], 'son_mesaj': 'X'}
+    taban = [islem(f"T{i}", i, 0.01) for i in range(20)]
+    atr = [islem(f"A{i}", i, -0.02) for i in range(8)]
+    yatay = [islem(f"Y{i}", i, 0.004) for i in range(6)]
+    ozet = vs.backfill_karsilastirma({'B_V184_AI': taban, 'B_AI_ATR4': taban + atr, 'B_AI_REJIMSIZ': taban + yatay,
+                                      'B_V1802': [islem(f"E{i}", i, 0.02) for i in range(15)], 'V184': taban})
+    assert set(ozet['senaryolar']) == {'B_V184_AI', 'B_AI_ATR4', 'B_AI_REJIMSIZ', 'B_V1802'}   # yalnız backfill
+    assert ozet['senaryolar']['B_V184_AI'] == pytest.approx(
+        {'n': 20, 'ort': 0.01, 'kazanan': 1.0, 'ga': [pytest.approx(0.01), pytest.approx(0.01)]})
+    assert ozet['eklenen']['atr_3_4']['n'] == 8 and ozet['eklenen']['atr_3_4']['ort'] == pytest.approx(-0.02)
+    assert ozet['eklenen']['yatay_rejim']['ort'] == pytest.approx(0.004)
+    f = ozet['fark']['B_AI_ATR4']
+    assert f['ort'] == pytest.approx((20 * 0.01 - 8 * 0.02) / 28 - 0.01) and f['ga'][1] < 0
+    assert ozet['fark']['B_V1802']['ort'] == pytest.approx(0.01) and ozet['fark']['B_V1802']['ga'][0] > 0
+    assert vs.backfill_karsilastirma({'GERCEK': taban}) == {}
+
+
+def test_uctan_uca_backfill_eski_kartsiz_modelle(dunya, tmp_path):
+    """Sunucudaki durum: kartsız eski core model. Altı backfill senaryosu da üretilir; Ağustos botu yalnız eski
+    modelin geçirdiği sinyallere girer, AI'lı V18.4 varyantları B_V184_AI'yı kapsar."""
+    import xgboost as xgb
+    rng = np.random.default_rng(1)
+    X = pd.DataFrame({'Giris_RSI': rng.uniform(55, 90, 400), 'Giris_Vol_Oran': rng.uniform(2.5, 9, 400),
+                      'Giris_ATR_Pct': rng.uniform(0.3, 4.0, 400), 'Sinyal_Encoded': 1.0})
+    m = xgb.XGBClassifier(n_estimators=20, max_depth=2).fit(X, (X['Giris_Vol_Oran'] > 4.5).astype(int))
+    model = tmp_path / 'core_xgboost_model.json'
+    m.save_model(str(model))
+    a = vs.arguman_ayristirici().parse_args([
+        '--baslangic', str(pd.Timestamp(T0_BF + 6 * 86_400_000, unit='ms')), '--kaynak', 'backfill',
+        '--onbellek', str(tmp_path / 'onb'), '--cikti', str(tmp_path / 'sim'), '--ai-model', str(model),
+        '--evren', '2', '--butce', '100'])
+    sonuc = vs.calistir(dunya, a, simdi_ms=T0_BF + 14 * 86_400_000, log=lambda *x: None)
+    sen = sonuc['senaryolar']
+    assert set(sen) == set(vs.B_SENARYOLAR)
+    k = lambda ad: {(x['sembol'], x['giris_ms']) for x in sen[ad]}  # noqa: E731
+    assert k('B_V184_AI') <= k('B_V184') and k('B_V184_AI') <= k('B_AI_ATR4') and k('B_V184_AI') <= k('B_AI_REJIMSIZ')
+    bt = pd.read_csv(tmp_path / 'sim_backfill.csv')
+    skor = {(r.sembol, int(r.giris_ms)): r.ai_skor for r in bt.itertuples()}
+    assert sen['B_V1802'] and all(skor[x] >= 0.65 for x in k('B_V1802'))
+    assert any(s < 0.65 for s in skor.values())                  # model gerçekten bazı sinyalleri eliyor
+    metin = (tmp_path / 'sim_rapor.txt').read_text(encoding='utf-8')
+    assert '(taban)' in metin and 'B_V1802' in metin
