@@ -885,6 +885,7 @@ async def start():
     await exchange.load_markets()
     bildir(f"🏢 CORE V18.4 başladı | {'GÖLGE MOD' if AI_GOLGE_MOD else 'BLOKLAMA MODU'} | "
            f"core: {CORE_YUVA.surum or 'yok'} | filtre: {FILTRE_YUVA.surum or 'yok'}")
+    SON_TUR.update(vip=time.time(), radar=time.time())  # watchdog açılış süresini gecikme saymasın
     try:
         await asyncio.gather(radar_loop(), vip_cuzdan_loop(), telegram_handler(),
                              bildirim_gorevi(), model_izleme_gorevi(), watchdog_gorevi())

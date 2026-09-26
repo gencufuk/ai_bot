@@ -200,9 +200,9 @@ V18.3 çıkış mantığı saf bir modüle (`sniper/risk_motoru.py`) taşındı.
 | `backfill_sinyaller.py` | yeni | §4.2 |
 | `sniper/*.py` | yeni | csv_kayit, risk_motoru, ozellikler, etiketleme, etiket_deposu, model_karti |
 | `tools/csv_onar.py` | yeni | kaymış yedeklerin onarımı |
-| `tests/` | yeni | 69 test (`python -m pytest tests/ -q`) |
+| `tests/` | yeni | 69 test: `pip install pytest fakeredis && python -m pytest tests/ -q` (borsa/Redis/Telegram gerekmez) |
 
-Yeni pip bağımlılığı yok (xgboost, pandas, pandas_ta, ccxt, redis, aiohttp mevcut). pandas ≥2.0 gerekli (loglardaki uyarı sunucuda 2.x olduğunu gösteriyor).
+Yeni pip bağımlılığı yok (xgboost, pandas, pandas_ta, ccxt, redis, aiohttp mevcut; `XGBClassifier` scikit-learn'e ihtiyaç duyar, V18.3 de bunu kullandığı için sunucuda kurulu olmalı). Test takımı iki yığında geçti: Python 3.12 + pandas 2.3.3 / numpy 2.2.6 ve pandas 3.0.6 / numpy 2.2.6 (xgboost 3.4.1, pandas_ta 0.4.71b0, ccxt 4.5). pandas_ta 0.4.x zaten Python ≥3.12, pandas ≥2.3.2 istiyor.
 
 ---
 
