@@ -19,6 +19,7 @@ Cron: trainer'dan önce, ör. 45 2 * * * (trainer 03:00 ise). API key gerekmez.
 import argparse
 import csv
 import glob
+import math
 import os
 import time
 from collections import Counter
@@ -109,7 +110,9 @@ def core_pozisyonlari(yollar):
         g = g.sort_values('_t')
         if all(c in KISMI_CIKISLAR for c in g['Cikis_Tipi']):
             continue  # pozisyon hâlâ açık: gerçekleşen sonuç eksik
-        ilk = g.iloc[0].to_dict()
+        # Farklı şemadaki dosyalar birleşince eksik kolonlar NaN olur; NaN "truthy" olduğundan
+        # `x or varsayilan` kalıbı yanlış çalışır -> önce NaN'ları None'a çevir.
+        ilk = {k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in g.iloc[0].to_dict().items()}
         giris_ms = int(g['_giris_ms'].min())
         pozisyon_id = ilk.get('Pozisyon_Id') or f"{ilk['Sembol']}|{giris_ms}"
         kasa_tipi = ilk.get('Kasa_Tipi') or 'NORMAL'
@@ -124,8 +127,16 @@ def core_pozisyonlari(yollar):
 
 
 def mumlari_getir(ex, sembol, ts_ms):
-    bas = (int(ts_ms) // 60_000) * 60_000   # sinyalin dakikası DAHİL (V1 ilk 15m mumu atlıyordu)
-    return ex.fetch_ohlcv(sembol, '1m', since=bas, limit=PENCERE_DK + 1)
+    """Sinyalin dakikasından başlayan 1m mumlar (V1 sinyalin 15m mumunu tamamen atlıyordu).
+    Sinyal dakikanın ortasındaysa o mumun açılış/tepe/dip değerleri kısmen SİNYAL ÖNCESİNE aittir
+    (kırılım sinyali tam da dakika içi sert bir hareketin ardından gelir): o mum yalnızca kapanışıyla,
+    yani sinyalden sonraki ilk kesin fiyatla temsil edilir."""
+    bas = (int(ts_ms) // 60_000) * 60_000
+    mumlar = [list(m) for m in ex.fetch_ohlcv(sembol, '1m', since=bas, limit=PENCERE_DK + 1)]
+    if mumlar and int(mumlar[0][0]) < int(ts_ms):
+        k = mumlar[0][4]
+        mumlar[0] = [mumlar[0][0], k, k, k, k, mumlar[0][5]]
+    return mumlar
 
 
 def etiketle(ex, adaylar, simdi_ms, hedef, flush_n=200):

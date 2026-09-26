@@ -181,3 +181,47 @@ def test_bozuk_satirlar_atlanir(tmp_path):
     yol = tmp_path / 'shadow.csv'
     _yaz(yol, ['Ts', 'Sembol', 'Fiyat', 'Sebep'], [[1, 'A/USDT', 1.0, 'X'], [2, 'B/USDT', 1.0, 'X', 'fazla']])
     assert [a['Sembol'] for a in sl.shadow_adaylari(str(yol))] == ['A/USDT']
+
+
+# ------------------------------------------------------------------------------------------
+# Bağımsız review bulguları (regresyon)
+# ------------------------------------------------------------------------------------------
+def test_farkli_semali_dosyalarda_nan_pozisyon_id_anahtarlari_cokertmez(tmp_path):
+    """Onarılmış eski yedekte Pozisyon_Id yok, yeni V2'de var: pandas eksik kolonu NaN yapar;
+    NaN 'truthy' olduğundan tüm eski pozisyonlar tek 'C|nan' anahtarına çöküyordu."""
+    v1 = ['Islem_Zamani', 'Sembol', 'Sinyal', 'Kasa_Tipi', 'Giris_RSI', 'Giris_Vol_Oran', 'Giris_ATR_Pct',
+          'Giris_Fiyat', 'Cikis_Fiyat', 'Kar_Orani', 'Net_Kar_USDT', 'Cikis_Tipi', 'Sure_Saat']
+    eski = tmp_path / 'core_islem_verileri_v2.csv.yedek.onarildi.csv'
+    _yaz(eski, v1, [['2026-09-18 10:00:00', f'S{i}/USDT', 'MSB', 'NORMAL', 60 + i, 3, 1, 1.0 + i, 1, 0, -0.5,
+                     '🛑 STOP LOSS (%-2.5)', 0.5] for i in range(5)])
+    yeni = tmp_path / 'core_islem_verileri_v2.csv'
+    _yaz(yeni, v1 + ['Pozisyon_Id', 'Giris_Ts'],
+         [['2026-09-25 10:00:00', 'NEW/USDT', 'MSB', 'NORMAL', 60, 3, 1, 1.0, 0.97, -3, -0.6, 'STOP', 1.0,
+           'NEW/USDT|1790330400000', 1790330400000]])
+    adaylar = sl.core_pozisyonlari([str(eski), str(yeni)])
+    anahtarlar = [a['Anahtar'] for a in adaylar]
+    assert len(anahtarlar) == 6 and len(set(anahtarlar)) == 6 and 'C|nan' not in anahtarlar
+    assert 'C|NEW/USDT|1790330400000' in anahtarlar
+
+
+def test_sinyal_dakikasinin_sinyal_oncesi_fiyati_etiketi_bozmaz():
+    """Sinyal, dakika içindeki +%3'lük pompanın 40 sn sonrasında: o 1m mumun açılış/dibi sinyalden
+    ÖNCEYE ait. Eskiden 'gap' kuralıyla sahte SL -%3.2 çıkıyordu; fiyat sonra hep yükseldiği hâlde."""
+    T = 1_790_000_040_000 - (1_790_000_040_000 % 60_000)
+    ts_sinyal = T + 40_000
+    mumlar = [[T, 1.000, 1.031, 1.000, 1.030, 1e6]]
+    p = 1.030
+    for i in range(1, 241):
+        p *= 1.0003
+        mumlar.append([T + i * 60_000, p, p * 1.001, p * 0.9995, p, 1e5])
+
+    class Ex:
+        def fetch_ohlcv(self, s, tf, since, limit):
+            assert since == T
+            return mumlar[:limit]
+    alinan = sl.mumlari_getir(Ex(), 'X/USDT', ts_sinyal)
+    assert alinan[0][1:5] == [1.030] * 4                     # sadece kapanış (sinyal sonrası ilk kesin fiyat)
+    e = sl.sinyali_etiketle(1.030, 1.5, False, alinan, kayma_uygula=True)
+    assert e['sonuc'] == 'TP' and e['getiri'] > 0
+    hizali = sl.mumlari_getir(Ex(), 'X/USDT', T)              # dakika başı sinyal: mum olduğu gibi kalır
+    assert hizali[0] == mumlar[0]

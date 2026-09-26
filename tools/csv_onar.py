@@ -10,7 +10,8 @@ Kullanım:
   python tools/csv_onar.py core_islem_verileri_v2.csv.yedek
       -> core_islem_verileri_v2.csv.yedek.onarildi.csv üretir (girdi değişmez)
   python tools/csv_onar.py core_islem_verileri_v2.csv.yedek --birlestir core_islem_verileri_v2.csv
-      -> onarılan satırları hedef dosyaya tekrarsız ekler (atomik; hedefin yedeği alınır)
+      -> onarılan satırları hedef dosyaya tekrarsız ekler (atomik; hedefin yedeği alınır).
+         BOTU DURDURARAK çalıştırın: dosya okunurken bot yeni satır eklerse işlem iptal edilir.
   python tools/csv_onar.py core_islem_verileri.csv.legacy_123 --v1-basliksiz
       -> başlıksız eski V1 dosyasına başlık ekler
 
@@ -76,7 +77,13 @@ def anahtar(tur, kolonlar, satir):
     return (d.get('Ts'), d.get('Sembol'))
 
 
+def _imza(yol):
+    st = os.stat(yol)
+    return st.st_size, st.st_mtime_ns
+
+
 def birlestir(tur, kolonlar, satirlar, hedef):
+    imza = _imza(hedef)
     with open(hedef, encoding='utf-8-sig', newline='') as f:
         mevcut = list(csv.reader(f))
     h_baslik, h_govde = mevcut[0], mevcut[1:]
@@ -102,6 +109,9 @@ def birlestir(tur, kolonlar, satirlar, hedef):
     govde.sort(key=lambda r: (float(r[i]) if tur == 'shadow' and r[i] else 0.0, r[i]))
     yedek = f"{hedef}.onarim_oncesi_{int(time.time())}"
     shutil.copy2(hedef, yedek)
+    if _imza(hedef) != imza:   # iyimser eşzamanlılık: bot bu arada satır eklediyse ezme
+        raise SystemExit(f"{hedef} okunurken değişti (bot çalışıyor olabilir). Botu durdurup tekrar deneyin; "
+                         f"hiçbir şey yazılmadı.")
     atomik_yaz(hedef, birlesik, govde)
     return eklenen, yedek
 

@@ -10,6 +10,7 @@ import sys
 import datetime
 import os
 import traceback
+from collections import deque
 from dotenv import load_dotenv
 
 from sniper import risk_motoru as risk
@@ -79,6 +80,7 @@ SINYAL_KAPALI_MUM = False          # True: sinyal son KAPANMIŞ 15m mumla üreti
 WATCHDOG_VIP_SN = 60               # VIP döngüsü bu süre tur tamamlamazsa Telegram alarmı
 WATCHDOG_RADAR_SN = 180
 MODEL_KONTROL_SN = 300             # model dosyaları bu aralıkla değişiklik için kontrol edilir (hot reload)
+BEKLEYEN_ALIM_SN = 300             # alım emri sürerken cüzdan senkronu o coini sahiplenmez
 # Bot'un ASLA sahiplenmeyeceği / satmayacağı coinler (elle tutulan bakiyeler): .env -> MANUEL_COINLER=ETH,SOL
 MANUEL_COINLER = {c.strip().upper() for c in os.getenv('MANUEL_COINLER', '').split(',') if c.strip()}
 
@@ -125,6 +127,7 @@ BILDIRIM_KUYRUGU = None
 ANA_LOOP = None
 _SON_UYARI = {}
 SON_TUR = {'vip': time.time(), 'radar': time.time()}
+AI_KARARLARI = deque(maxlen=50)   # son AI kararları (True = engellendi / gölge modda engellenecekti)
 
 
 def debug_log(mesaj):
@@ -162,6 +165,20 @@ def seyrek_bildir(anahtar, mesaj, aralik=1800):
     if simdi - _SON_UYARI.get(anahtar, 0) >= aralik:
         _SON_UYARI[anahtar] = simdi
         bildir(mesaj)
+
+
+def _engelleme_orani_izle(engellendi):
+    """Canlı engelleme oranı modelin hedefinden çok saparsa uyarır: eğitim (çoğu backfill, kapalı mum)
+    ile canlı (kısmi mum) feature dağılımı kaymışsa eşik canlıda farklı çalışır."""
+    AI_KARARLARI.append(bool(engellendi))
+    hedef = (CORE_YUVA.kart or {}).get('hedef_engelleme_orani')
+    if hedef is None or len(AI_KARARLARI) < 30:
+        return
+    oran = sum(AI_KARARLARI) / len(AI_KARARLARI)
+    if oran > max(2 * hedef, 0.6) or oran < hedef / 3:
+        seyrek_bildir('engelleme_orani', f"⚠️ AI engelleme oranı %{oran * 100:.0f} (son {len(AI_KARARLARI)} sinyal, "
+                                         f"model hedefi %{hedef * 100:.0f}). Canlı feature dağılımı eğitimden kaymış olabilir"
+                                         f"{' (gölge mod: işlem etkilenmedi)' if AI_GOLGE_MOD else ''}.", aralik=6 * 3600)
 
 
 def _f(x, varsayilan):
@@ -318,6 +335,7 @@ async def check_wallet_sync(session):
             if any(y in sym for y in YASAKLI_COINLER) or sym in is_list or coin in ["USDT", "BNB"]: continue
             if coin.upper() in MANUEL_COINLER: continue
             if db.hexists(f"{PREF}:islem_listesi", sym): continue  # anlık görüntüden sonra açılmış pozisyon
+            if db.exists(f"{PREF}:bekleyen_alim:{sym}"): continue  # alım emri sürüyor
             fiyat = RAW_TICKERS.get(sym, {}).get('last', 0)
             if fiyat > 0 and (miktar * fiyat) > ORPHAN_THRESHOLD_USDT:
                 pipe = db.pipeline(transaction=True)
@@ -437,30 +455,52 @@ async def telegram_handler():
 # ----------------------------------------------------------------------------------------
 # EMİR KATMANI: idempotent market emirleri
 # ----------------------------------------------------------------------------------------
+# Borsanın emri KESİN reddettiği (hiç gerçekleşmediği) hatalar. Bunların dışındaki her hata
+# (Binance -1000/-1001/-1006 "execution status unknown" -> ccxt.OperationFailed; yarım okunan
+# cevap -> ExchangeError; zaman aşımı -> RequestTimeout...) sonucu BELİRSİZ sayar ve sorgular.
+KESIN_RED_HATALARI = (ccxt.InvalidOrder, ccxt.InsufficientFunds, ccxt.BadRequest, ccxt.AuthenticationError,
+                      ccxt.NotSupported, ccxt.ArgumentsRequired, ccxt.OperationRejected,
+                      ccxt.RateLimitExceeded, ccxt.DDoSProtection, ccxt.InvalidNonce)
+
+
+class BelirsizEmirHatasi(Exception):
+    """Emir borsaya ulaşmış olabilir ama gerçekleşip gerçekleşmediği teyit edilemedi."""
+
+
 async def _guvenli_market_emri(sym, taraf, miktar):
-    """clientOrderId ile emir verir. Ağ hatası/zaman aşımında sonuç BELİRSİZDİR (emir borsaya
-    ulaşmış olabilir): aynı ID ile sorgulanır, dolduysa emir döner. V18.3'te bu durumda emir
-    'başarısız' sayılıp tekrarlanıyordu -> çift kısmi satış / kaydı olmayan satış."""
+    """clientOrderId ile emir verir. Sonuç belirsizse (emir borsaya ulaşmış olabilir) aynı ID ile
+    sorgulanır: dolduysa emir döner, teyit edilemezse BelirsizEmirHatasi. V18.3'te bu durumda emir
+    'başarısız' sayılıp tekrarlanıyordu -> çift alım / çift kısmi satış / kaydı olmayan satış.
+    0 dolumla dönen (EXPIRED/CANCELED) market emri başarısız sayılır: pozisyon kapatılmaz."""
+    if taraf == 'sell' and sym.split('/')[0].upper() in MANUEL_COINLER:
+        raise ccxt.InvalidOrder(f"{sym} MANUEL_COINLER listesinde: bot bu coini satmaz")
     cid = f"sn{int(time.time() * 1000)}{os.urandom(3).hex()}"
     params = {'newClientOrderId': cid}
     try:
         if taraf == 'sell':
-            return await exchange.create_market_sell_order(sym, miktar, params=params)
-        return await exchange.create_market_buy_order(sym, miktar, params=params)
-    except (ccxt.NetworkError, asyncio.TimeoutError) as e:
-        debug_log(f"⚠️ {sym} {taraf} emri belirsiz ({type(e).__name__}); {cid} sorgulanıyor...")
+            o = await exchange.create_market_sell_order(sym, miktar, params=params)
+        else:
+            o = await exchange.create_market_buy_order(sym, miktar, params=params)
+    except KESIN_RED_HATALARI:
+        raise
+    except Exception as e:
+        debug_log(f"⚠️ {sym} {taraf} emri belirsiz ({type(e).__name__}: {e}); {cid} sorgulanıyor...")
         for bekle in (1, 2, 4):
             await asyncio.sleep(bekle)
             try:
                 o = await exchange.fetch_order(None, sym, params={'origClientOrderId': cid})
-            except (ccxt.OrderNotFound, ccxt.NetworkError):
-                continue
+            except Exception:
+                continue  # henüz görünmüyor / sorgu da hata verdi: tekrar dene
             if o and float(o.get('filled') or 0) > 0:
                 debug_log(f"✅ {sym} {taraf} emri borsada gerçekleşmiş ({cid}).")
                 return o
             if o and o.get('status') in ('canceled', 'rejected', 'expired'):
-                break
-        raise
+                raise ccxt.InvalidOrder(f"{sym} {taraf} emri {o.get('status')}, dolum yok ({cid})") from e
+        raise BelirsizEmirHatasi(f"{sym} {taraf} emrinin sonucu teyit edilemedi ({cid}): {e}") from e
+    if o.get('filled') is not None and float(o.get('filled') or 0) <= 0 and \
+            o.get('status') in ('canceled', 'rejected', 'expired'):
+        raise ccxt.InvalidOrder(f"{sym} {taraf} market emri {o.get('status')}, 0 dolum ({cid})")
+    return o
 
 
 def _alinan_net_adet(order, istenen, coin):
@@ -544,6 +584,9 @@ async def _yarim_sat(sym, p, e, tick, i_mik, adet, ai, kasa_tipi, simdi):
         order = await _guvenli_market_emri(sym, 'sell', satilacak_miktar)
     except Exception as ex:
         debug_log(f"⚠️ {e.mesaj} Satış Hatası ({sym}): {ex}")
+        if isinstance(ex, BelirsizEmirHatasi):
+            seyrek_bildir(f"belirsiz:{sym}", f"🚨 {sym} yarım satış sonucu BELİRSİZ: {ex}. Kalan bakiye takip "
+                                            f"edilen adedi aşmayacak şekilde satılır; cüzdanı kontrol et.", aralik=600)
         return 'HATA'
     g_satis = get_fill_price(order, tick)
     satilan = float(order.get('filled') or satilacak_miktar)
@@ -608,6 +651,11 @@ async def _tam_cikis(sym, p, exit_msg, tick, i_mik, adet, ai, kasa_tipi, simdi):
 
 
 async def _pozisyonu_isle(sym, a_str, tick, ham, simdi):
+    if sym.split('/')[0].upper() in MANUEL_COINLER:
+        # Elle yönetilen coin (ör. V18.3 cüzdan senkronunun eskiden sahiplendiği bakiye): takibi bırak, SATMA
+        _pozisyonu_kapat(sym, cooldown=False)
+        bildir(f"ℹ️ {sym} MANUEL_COINLER listesinde: bot bu pozisyonun takibini bıraktı, satış yapmayacak.")
+        return
     try: ai = json.loads(ham['ai_data'] or "{}")
     except Exception: ai = {}
     if not isinstance(ai, dict): ai = {}
@@ -705,7 +753,18 @@ async def _alim_yap(sym, ai_metrics, aktif_kasa):
 
         if formatted_amount * ask <= MIN_NOTIONAL_USDT:  # Binance Min Emir Tutarı (Notional) Kontrolü
             return False
+        # Emir sürerken cüzdan senkronu bakiyede beliren bu coini "sahipsiz" sanıp sahiplenmesin
+        db.set(f"{PREF}:bekleyen_alim:{sym}", "1", ex=BEKLEYEN_ALIM_SN)
         order = await _guvenli_market_emri(sym, 'buy', formatted_amount)
+    except BelirsizEmirHatasi as e:
+        debug_log(f"🚨 {e}")
+        try:
+            db.hset(f"{PREF}:cooldowns", sym, str(time.time() + 3600))
+        except Exception:
+            pass
+        bildir(f"🚨 **{sym} ALIM SONUCU BELİRSİZ**: {e}\nBu sembolde 1 saat alım yapılmayacak. Alım gerçekleştiyse "
+               f"cüzdan senkronu coini ≤30 dk içinde sahiplenip korumaya alır; yine de cüzdanı kontrol et.")
+        return True  # alım gerçekleşmiş olabilir: bu turda ikinci alım yapılmasın
     except Exception as e:
         debug_log(f"⚠️ Alım Emri Başarısız ({sym}): {e}")
         return False
@@ -719,6 +778,7 @@ async def _alim_yap(sym, ai_metrics, aktif_kasa):
             ":islem_miktarlari": str(formatted_amount * gerceklesen_fiyat),
             ":max_karlar": "0.0", ":giris_zamanlari": str(time.time()),
             ":ai_data": json.dumps(ai_metrics), ":adetler": str(adet)})
+        pipe.delete(f"{PREF}:bekleyen_alim:{sym}")
         pipe.execute()
     except Exception as ex:
         debug_log(f"🚨 {sym} alındı ama Redis'e yazılamadı: {ex}")
@@ -787,6 +847,8 @@ async def radar_loop():
                         # --- AI KARARI ---
                         # Gölge modda skor sadece loglanır/kaydedilir, işlem BLOKLANMAZ.
                         ai_s, f_s = ai_metrics.get("ai_score"), ai_metrics.get("filter_score")
+                        if CORE_YUVA.yuklu:
+                            _engelleme_orani_izle(ai_s is None or CORE_YUVA.blokla_mi(ai_s) or FILTRE_YUVA.blokla_mi(f_s))
                         if not AI_GOLGE_MOD:
                             if not CORE_YUVA.yuklu:
                                 # Bloklama modunda model yoksa işlem açılmaz (V18.3'ün açılış kontrolüyle tutarlı)
@@ -839,6 +901,7 @@ async def model_izleme_gorevi():
             except Exception as e:
                 mesaj = f"⚠️ {yuva.rol} modeli kontrol edilemedi: {e}"
             if mesaj:
+                AI_KARARLARI.clear()  # yeni model/eşik: oran sıfırdan ölçülür
                 debug_log(mesaj); bildir(mesaj)
 
 

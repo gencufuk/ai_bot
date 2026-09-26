@@ -27,6 +27,9 @@ class SahteBorsa:
         self.fiyatlar, self.bakiye, self.emirler, self.kayitli = {}, {'USDT': 1000.0}, [], {}
         self.hata_kuyrugu = []          # sıradaki create_* çağrılarında fırlatılacak istisnalar
         self.belirsiz_sonraki = False   # emri GERÇEKLEŞTİR, sonra RequestTimeout fırlat
+        self.sonra_firlat = None        # emri GERÇEKLEŞTİR, sonra bu istisnayı fırlat (ör. -1006)
+        self.sifir_dolum_sonraki = False  # EXPIRED, 0 dolum döndür (bakiye değişmez)
+        self.sorgu_sayisi = 0
         self.kotu_semboller = set()
         self.ohlcv = {}
         self.ticker_cagri = 0
@@ -56,6 +59,10 @@ class SahteBorsa:
     def _emir(self, sym, taraf, amount, params):
         if self.hata_kuyrugu:
             raise self.hata_kuyrugu.pop(0)
+        if self.sifir_dolum_sonraki:
+            self.sifir_dolum_sonraki = False
+            return {'id': 'x', 'symbol': sym, 'side': taraf, 'amount': float(amount), 'filled': 0.0,
+                    'average': None, 'cost': 0.0, 'status': 'expired', 'fees': []}
         coin, amount, fiyat = sym.split('/')[0], float(amount), self.fiyatlar[sym]
         fees = []
         if taraf == 'sell':
@@ -76,6 +83,9 @@ class SahteBorsa:
         if self.belirsiz_sonraki:
             self.belirsiz_sonraki = False
             raise ccxt.RequestTimeout('binance POST https://api.binance.com/api/v3/order timed out')
+        if self.sonra_firlat is not None:
+            e, self.sonra_firlat = self.sonra_firlat, None
+            raise e
         return o
 
     async def create_market_sell_order(self, sym, amount, params=None):
@@ -85,6 +95,7 @@ class SahteBorsa:
         return self._emir(sym, 'buy', amount, params)
 
     async def fetch_order(self, id, sym, params=None):
+        self.sorgu_sayisi += 1
         cid = (params or {}).get('origClientOrderId')
         if cid in self.kayitli:
             return self.kayitli[cid]
@@ -360,3 +371,110 @@ def test_shadow_kaydi_mevcut_dosyayi_yeni_kolonlarla_genisletir(ortam):
     df = pd.read_csv(tmp / 'shadow_sinyaller.csv')
     assert list(df.columns[:25]) == eski_kolonlar and 'Mum_Ilerleme' in df.columns
     assert len(df) == 2 and df.loc[1, 'Mum_Ilerleme'] == 0.4 and df.loc[0, 'Sembol'] == 'x'
+
+
+# ------------------------------------------------------------------------------------------
+# Bağımsız review bulguları (regresyon)
+# ------------------------------------------------------------------------------------------
+BILINMEYEN = 'binance {"code":-1006,"msg":"An unexpected response was received from the message bus. Execution status unknown."}'
+
+
+def test_1006_durumu_bilinmeyen_alim_dolmussa_bulunur_tek_alim(ortam):
+    """-1006 ccxt'de OperationFailed (NetworkError'ın ÜST sınıfı): eskiden kesin hata sayılıyor,
+    dolmuş alım kaydedilmiyor ve sonraki radar turunda aynı coin tekrar alınıyordu."""
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'UNK/USDT': 2.0}
+    borsa.sonra_firlat = ccxt.OperationFailed(BILINMEYEN)
+    metrics = {'fiyat': 2.0, 'atr_pct': 1.2, 'is_whale': False, 'signal': 'MSB', 'ai_score': None}
+    alindi, _ = calistir(lambda: ai_bot._alim_yap('UNK/USDT', metrics, 20.0))
+    assert alindi and len(borsa.emirler) == 1 and borsa.sorgu_sayisi >= 1
+    assert db.hexists(f'{P}:islem_listesi', 'UNK/USDT')
+    assert float(db.hget(f'{P}:adetler', 'UNK/USDT')) == pytest.approx(borsa.bakiye['UNK'])
+    assert not db.exists(f'{P}:bekleyen_alim:UNK/USDT')
+
+
+def test_yarim_cevap_exchangeerror_de_belirsiz_sayilir(ortam):
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'PAY/USDT': 1.036}
+    borsa.bakiye['PAY'] = 20.0
+    pozisyon(db, 'PAY/USDT', 1.0, adet=20.0, max_kar=0.05)
+    borsa.sonra_firlat = ccxt.ExchangeError('aiohttp ClientPayloadError: Response payload is not completed')
+    calistir(ai_bot.vip_turu)
+    assert len(borsa.emirler) == 1 and db.hget(f'{P}:half_sold', 'PAY/USDT') == '1'
+    calistir(ai_bot.vip_turu)
+    assert len(borsa.emirler) == 1          # ikinci (çift) yarım satış yok
+
+
+def test_teyit_edilemeyen_alim_cooldown_ve_uyari(ortam):
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'NOK/USDT': 2.0}
+    borsa.hata_kuyrugu = [ccxt.OperationFailed(BILINMEYEN)]      # emir borsaya hiç ulaşmadı
+    metrics = {'fiyat': 2.0, 'atr_pct': 1.2, 'is_whale': False, 'signal': 'MSB', 'ai_score': None}
+    alindi, mesajlar = calistir(lambda: ai_bot._alim_yap('NOK/USDT', metrics, 20.0))
+    assert alindi is True                    # bu turda ikinci alım yapılmasın
+    assert borsa.emirler == [] and not db.hexists(f'{P}:islem_listesi', 'NOK/USDT')
+    assert float(db.hget(f'{P}:cooldowns', 'NOK/USDT')) > time.time() + 3000
+    assert any('ALIM SONUCU BELİRSİZ' in m for m in mesajlar)
+
+
+def test_kesin_ret_sorgulanmaz(ortam):
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'INS/USDT': 2.0}
+    borsa.hata_kuyrugu = [ccxt.InsufficientFunds('Account has insufficient balance')]
+    metrics = {'fiyat': 2.0, 'atr_pct': 1.2, 'is_whale': False, 'signal': 'MSB', 'ai_score': None}
+    alindi, _ = calistir(lambda: ai_bot._alim_yap('INS/USDT', metrics, 20.0))
+    assert alindi is False and borsa.sorgu_sayisi == 0
+    assert not db.hexists(f'{P}:cooldowns', 'INS/USDT')
+
+
+def test_sifir_dolumlu_market_emri_pozisyonu_kapatmaz(ortam):
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'EXP/USDT': 0.9}
+    borsa.bakiye['EXP'] = 20.0
+    pozisyon(db, 'EXP/USDT', 1.0, adet=20.0)
+    borsa.sifir_dolum_sonraki = True
+    calistir(ai_bot.vip_turu)
+    assert db.hexists(f'{P}:islem_listesi', 'EXP/USDT') and borsa.bakiye['EXP'] == 20.0
+    calistir(ai_bot.vip_turu)                # sonraki tur normal satış
+    assert not db.hexists(f'{P}:islem_listesi', 'EXP/USDT') and borsa.bakiye['EXP'] == 0.0
+
+
+def test_manuel_coin_eskiden_sahiplenilmis_pozisyon_asla_satilmaz(ortam, monkeypatch):
+    """V18.3 cüzdan senkronu ETH'yi (adetsiz) sahiplenmişti; kullanıcı sonra MANUEL_COINLER=ETH ekliyor."""
+    borsa, db, _ = ortam
+    monkeypatch.setattr(ai_bot, 'MANUEL_COINLER', {'ETH'})
+    borsa.fiyatlar = {'ETH/USDT': 2880.0}
+    borsa.bakiye['ETH'] = 2.0
+    pozisyon(db, 'ETH/USDT', 3000.0, maliyet=6000.0)             # -%4: stop koşulu
+    _, mesajlar = calistir(ai_bot.vip_turu)
+    assert borsa.emirler == [] and borsa.bakiye['ETH'] == 2.0
+    assert not db.hexists(f'{P}:islem_listesi', 'ETH/USDT')
+    assert any('MANUEL_COINLER' in m for m in mesajlar)
+    with pytest.raises(ccxt.InvalidOrder):                       # tek geçiş noktası da satmayı reddeder
+        calistir(lambda: ai_bot._guvenli_market_emri('ETH/USDT', 'sell', 1.0))
+
+
+def test_bekleyen_alim_cuzdan_senkronunda_sahiplenilmez(ortam):
+    borsa, db, _ = ortam
+    ai_bot.RAW_TICKERS = {'PND/USDT': {'last': 2.0}}
+    borsa.bakiye['PND'] = 10.0                                    # alım borsada gerçekleşti, cevap bekleniyor
+    db.set(f'{P}:bekleyen_alim:PND/USDT', '1', ex=300)
+    try:
+        _, mesajlar = calistir(lambda: ai_bot.check_wallet_sync(None))
+    finally:
+        ai_bot.RAW_TICKERS = {}
+    assert not db.hexists(f'{P}:islem_listesi', 'PND/USDT') and not any('SAHİPSİZ' in m for m in mesajlar)
+
+
+def test_canli_engelleme_orani_hedeften_saparsa_uyarir(ortam, monkeypatch):
+    class Yuva:
+        kart = {'hedef_engelleme_orani': 0.3}
+    monkeypatch.setattr(ai_bot, 'CORE_YUVA', Yuva())
+    ai_bot.AI_KARARLARI.clear()
+
+    async def besle():
+        for i in range(40):
+            ai_bot._engelleme_orani_izle(i % 10 != 0)             # %90 engelleme
+    _, mesajlar = calistir(besle)
+    ai_bot.AI_KARARLARI.clear()
+    assert any('engelleme oranı %90' in m for m in mesajlar)

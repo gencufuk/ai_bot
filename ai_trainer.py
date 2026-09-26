@@ -23,7 +23,11 @@ V3:
   - Adaylar: depth-1 (stump / GAM benzeri) ve depth-2 XGBoost; lineer baz model (sadece kıyas).
   - Kapılar: havuzlanmış OOS AUC >= MIN_AUC, %95 alt güven sınırı > 0.5, katların çoğunda > 0.5,
     ekonomik test (en kötü %30'u engellemek ortalama getiriyi anlamlı artırıyor mu, permütasyon).
-  - Eşik OPTİMİZE EDİLMEZ: OOS skorlarının ENGELLEME_ORANI kantili (seçim iyimserliği yok).
+  - Eşik OPTİMİZE EDİLMEZ: OOS skorlarının ENGELLEME_ORANI kantili (seçim iyimserliği yok);
+    yeterli canlı örnek varsa canlı (core+shadow) skorların kantili: backfill kapalı mumla, canlı bot
+    kısmi mumla çalıştığı için havuz eşiği canlıda farklı oranda engelleyebilir (raporlanır).
+  - Ekonomik test her episodun İLK sinyaliyle yapılır: bot pozisyondayken aynı sembolün sonraki
+    sinyallerini zaten işlemez ve çakışan sinyaller bağımsız gözlem değildir.
   - Model + kart (feature listesi, eşik, metrikler, SHA-256) atomik kaydedilir; bot hot-reload eder.
   - egitim_raporu.json: tüm metrikler, kararlar, kaynak dağılım kayması (adversarial validation).
 
@@ -64,6 +68,7 @@ BOOT_N, PERM_N = 2000, 5000
 SADECE_BTC_OK = True       # canlı bot BTC_OK=False iken sinyal analiz etmez: dağılımı eşle
 CANLI_KAYNAKLAR = ('core', 'shadow')
 CANLI_AGIRLIK = 1.0        # canlı örneklere ek ağırlık (dağılım kaymasında >1 denenebilir)
+MIN_CANLI_ESIK = 50        # bu kadar canlı OOS örnek varsa eşik canlı skorların kantilinden alınır
 ESKI_FILTREYI_EMEKLI_ET = True
 
 # Varsayılan feature'lar: geçmişe dönük üretilebilen (backfill) ve ölçekten bağımsız olanlar.
@@ -327,9 +332,21 @@ def egit(yollar, kuru=False):
     s = sonuclar[en_iyi]
     oos = s['_oos']
     m = ~np.isnan(oos)
-    eko = ekonomik_test(df['Etiket_Getiri'].to_numpy()[m], oos[m])
+    ilk_sinyal = m & ~df['episod'].duplicated().to_numpy()
+    eko = ekonomik_test(df['Etiket_Getiri'].to_numpy()[ilk_sinyal], oos[ilk_sinyal])
+    eko['n_episod'] = int(ilk_sinyal.sum())
     canli = m & df['Kaynak'].isin(CANLI_KAYNAKLAR).to_numpy()
     canli_auc = auc(y[canli], oos[canli]) if canli.sum() >= 40 else None
+    esik_havuz = float(np.quantile(oos[m], ENGELLEME_ORANI))
+    esik_bilgi = {'esik_havuz': esik_havuz, 'n_canli_oos': int(canli.sum()),
+                  'canli_engelleme_havuz_esigiyle': float((oos[canli] < esik_havuz).mean()) if canli.sum() else None}
+    if canli.sum() >= MIN_CANLI_ESIK:
+        esik_bilgi.update(esik=float(np.quantile(oos[canli], ENGELLEME_ORANI)), esik_kaynagi='canli')
+    else:
+        esik_bilgi.update(esik=esik_havuz, esik_kaynagi='havuz')
+    if esik_bilgi['canli_engelleme_havuz_esigiyle'] is not None and canli.sum() >= 20:
+        log(f"   havuz eşiği canlı sinyallerin %{esik_bilgi['canli_engelleme_havuz_esigiyle'] * 100:.0f}'ini engellerdi "
+            f"(hedef %{ENGELLEME_ORANI * 100:.0f}); eşik kaynağı: {esik_bilgi['esik_kaynagi']}")
     kat_ok = sum(1 for x in s['kat_auc'] if x is not None and x > 0.5)
 
     kapilar = {
@@ -341,7 +358,7 @@ def egit(yollar, kuru=False):
     }
     rapor.update({'adaylar': {k: {kk: vv for kk, vv in v.items() if kk != '_oos'} for k, v in sonuclar.items()},
                   'secilen': en_iyi, 'ekonomik': eko, 'canli_oos_auc': canli_auc, 'kapilar': kapilar,
-                  'lineer_kiyas': sonuclar['lineer']['oos_auc']})
+                  'lineer_kiyas': sonuclar['lineer']['oos_auc'], 'esik': esik_bilgi})
     log(f"🧪 Seçilen {en_iyi}: engellenen %{ENGELLEME_ORANI * 100:.0f} -> ort. net getiri "
         f"{eko['ort_getiri_hepsi'] * 100:+.2f}% → {eko['ort_getiri_gecen'] * 100:+.2f}% (p={eko['p']:.3f}) | "
         f"canlı OOS AUC: {canli_auc if canli_auc is None else round(canli_auc, 3)}")
@@ -359,14 +376,15 @@ def egit(yollar, kuru=False):
     final = xgb_model(ADAYLAR[en_iyi])
     final.fit(X, y, sample_weight=df['w'].to_numpy())
     surum = f"v3-{datetime.datetime.now(datetime.timezone.utc):%Y%m%d%H%M}-{en_iyi}"
-    kart = {'surum': surum, 'rol': 'core', 'yon': 'min', 'esik': eko['esik_oos'], 'ozellikler': featurelar,
+    kart = {'surum': surum, 'rol': 'core', 'yon': 'min', 'esik': esik_bilgi['esik'], 'ozellikler': featurelar,
             'hedef': 'Etiket_Getiri > 0', 'etiket_surumu': ETIKET_SURUMU,
             'hedef_engelleme_orani': ENGELLEME_ORANI,
-            'dogrulama': {k: rapor[k] for k in ('adaylar', 'secilen', 'ekonomik', 'canli_oos_auc', 'kapilar')},
+            'dogrulama': {k: rapor[k] for k in ('adaylar', 'secilen', 'ekonomik', 'canli_oos_auc', 'kapilar', 'esik')},
             'veri': rapor['veri'], 'xgboost_surumu': xgb.__version__,
             'onem_gain': {k: round(v, 4) for k, v in final.get_booster().get_score(importance_type='gain').items()}}
     modeli_kartla_kaydet(final, CORE_MODEL, kart)
-    log(f"✅ Core model yayına alındı: {surum} | OOS AUC {s['oos_auc']:.3f} | eşik {eko['esik_oos']:.3f} | "
+    log(f"✅ Core model yayına alındı: {surum} | OOS AUC {s['oos_auc']:.3f} | eşik {esik_bilgi['esik']:.3f} "
+        f"({esik_bilgi['esik_kaynagi']}) | "
         f"{len(featurelar)} feature")
     rapor['karar'], rapor['surum'] = 'yayinda', surum
     if ESKI_FILTREYI_EMEKLI_ET and os.path.exists(FILTRE_MODEL):

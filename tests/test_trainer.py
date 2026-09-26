@@ -14,17 +14,18 @@ from sniper.model_karti import ModelYuvasi, kart_oku
 T0 = 1_780_000_000_000
 
 
-def sentetik(n, sinyal_gucu, seed=0, canli_orani=0.1):
+def sentetik(n, sinyal_gucu, seed=0, canli_orani=0.1, canli_ema_carpan=1.0):
     rng = np.random.default_rng(seed)
     ts = T0 + np.sort(rng.integers(0, 180 * 86_400_000, n))
+    kaynak = np.where(rng.random(n) < canli_orani, 'shadow', 'backfill')
     atr = rng.uniform(0.6, 2.9, n)
     ema15 = atr * rng.uniform(0.5, 5.0, n)            # ATR cinsinden 0.5-5 uzaklık
+    ema15 = np.where(kaynak == 'shadow', ema15 * canli_ema_carpan, ema15)   # kovaryat kayması (ilişki aynı)
     rsi = rng.uniform(56, 92, n)
     # sinyal: aşırı uzamış (EMA15m_ATR büyük) ve RSI'ı çok yüksek girişler kötü sonuçlanır
     gizli = -sinyal_gucu * ((ema15 / atr - 2.75) / 1.3 + (rsi - 74) / 10)
     getiri = 0.012 * gizli + rng.normal(0, 0.025, n)
     sonuc = np.where(getiri > 0.02, 'TP', np.where(getiri < -0.02, 'SL', 'ZAMAN'))
-    kaynak = np.where(rng.random(n) < canli_orani, 'shadow', 'backfill')
     df = pd.DataFrame({
         'Anahtar': [f"X|{t}|{i}" for i, t in enumerate(ts)], 'Kaynak': kaynak, 'Ts': ts,
         'Sembol': rng.choice([f"S{i}/USDT" for i in range(25)], n), 'Sebep': 'BACKFILL', 'Sinyal': 'MSB',
@@ -108,3 +109,17 @@ def test_ekonomik_test_sans_eseri_artisi_yakalamaz():
     g = rng.normal(0, 0.02, 400)
     assert tr.ekonomik_test(g, rng.random(400), n=1000)['p'] > 0.05
     assert tr.ekonomik_test(g, g + rng.normal(0, 0.02, 400), n=1000)['p'] < 0.01
+
+
+def test_esik_yeterli_canli_ornek_varsa_canli_kantilden(tmp_path, monkeypatch):
+    """Backfill (kapalı mum) ile canlı (kısmi mum) dağılımı kayınca havuz eşiği canlıda hedeften farklı
+    oranda engeller; yeterli canlı OOS örnek varsa eşik canlı skorların kantilinden alınır."""
+    df = sentetik(1500, sinyal_gucu=1.0, seed=7, canli_orani=0.1, canli_ema_carpan=1.6)
+    yollar = kur(tmp_path, monkeypatch, df)
+    rapor = tr.egit(yollar)
+    assert rapor['karar'] == 'yayinda'
+    e = rapor['esik']
+    assert e['esik_kaynagi'] == 'canli' and e['n_canli_oos'] >= tr.MIN_CANLI_ESIK
+    assert e['canli_engelleme_havuz_esigiyle'] > 0.4           # havuz eşiği canlıda fazla engellerdi
+    assert kart_oku(str(tmp_path / 'core_xgboost_model.json'))['esik'] == pytest.approx(e['esik'])
+    assert rapor['ekonomik']['n_episod'] <= rapor['adaylar'][rapor['secilen']]['n_oos']

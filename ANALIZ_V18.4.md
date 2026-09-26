@@ -2,7 +2,8 @@
 
 > Tarih: 2026-09-26 · Kapsam: `main` dalındaki 17 dosya (kod, modeller, CSV'ler, loglar).
 > Bu dokümandaki her sayı repodaki veriden hesaplandı; hesaplama yöntemi ilgili bölümde yazılı.
-> Kod değişiklikleri `claude/ai-ensemble-sniper-optimization-zmtv9p` dalında; 69 otomatik test.
+> Kod değişiklikleri `claude/ai-ensemble-sniper-optimization-zmtv9p` dalında; 80 otomatik test
+> (pandas 2.3 ve 3.0'da), kritik düzeltmeler mutasyon testiyle doğrulandı, diff bağımsız bir review'dan geçti (§9).
 
 ---
 
@@ -114,8 +115,9 @@ Veride 400 örneğe kadar 8 feature'lık kompakt set, sonrasında 16 feature'lı
 3. **Düşük kapasite:** depth-1 (stump, GAM benzeri, etkileşim öğrenemez) ve depth-2 adaylar; `min_child_weight` (lojistik hessian ≤0.25 → yaprak başına ≥12–20 örnek), L2, `subsample`/`colsample`, düşük öğrenme hızı.
 4. **Lineer baz model** (numpy L2-lojistik): ağaç bunu geçemiyorsa derinlik aşırı öğrenmedir.
 5. **Kapılar:** havuzlanmış OOS AUC ≥0.55 **ve** %95 alt güven sınırı >0.5 **ve** katların çoğunda >0.5 **ve** ekonomik test (en kötü %30'u engellemek ortalama net getiriyi artırıyor mu, permütasyon p<0.05) **ve** canlı alt kümede AUC ≥0.5.
-6. **Eşik optimize edilmez:** OOS skorlarının %30 kantili alınır. Eşik optimizasyonu kendi başına bir overfitting kaynağıdır.
-7. **Adversarial validation:** model canlı veriyi backfill'den ayırt edebiliyorsa (AUC ≫0.5) raporlanır. Kısmi mum etkisini doğrudan gösterir.
+6. **Eşik optimize edilmez:** OOS skorlarının %30 kantili alınır. Eşik optimizasyonu kendi başına bir overfitting kaynağıdır. ≥50 canlı OOS örnek varsa kantil **canlı** skorlardan alınır: backfill kapalı mumla, canlı bot kısmi mumla çalıştığından havuz eşiği canlıda farklı oranda engelleyebilir. Sentetik kovaryat kaymasında havuz eşiği canlının %46'sını engelliyordu, rapor bunu gösterir. Bot tarafında da son 50 AI kararındaki engelleme oranı hedeften çok saparsa (gölge modda dahil) Telegram uyarısı gelir.
+7. **Ekonomik test episodun ilk sinyaliyle:** bot pozisyondayken aynı sembolün sonraki sinyallerini zaten işlemez ve çakışan sinyaller bağımsız değildir.
+8. **Adversarial validation:** model canlı veriyi backfill'den ayırt edebiliyorsa (AUC ≫0.5) raporlanır. Kısmi mum etkisini doğrudan gösterir.
 
 ### 3.3 SMOTE? — Hayır
 - **Dengesizlik sorun değil:** pozitif oran %34–52. SMOTE ciddi dengesizlik (≤%5) aracıdır.
@@ -138,6 +140,7 @@ Gerçek veri çoğaltma yolu **backfill** (§4). Ağırlıklandırma gerekiyorsa
 - **`sniper/etiketleme.py`:** tek etiket fonksiyonu. Bariyerler botun kendi risk parametreleri: alt bariyer ATR stopu (%2.5–5.5, balina %2), üst bariyer ilk kâr kademesi (%3–6), +%2.5 görülünce +%1 kâr kilidi, 4 saat pencere, komisyon dahil, aynı mumda iki bariyer görülürse muhafazakâr (SL), gap açılışta açılış fiyatından çıkış. Hedef `y = 1[net getiri > 0]`.
 - **`shadow_labeler.py` V2:** core pozisyonlarını da **aynı fonksiyonla** etiketler.
   - **V1 bug'ı:** `since=ts+1` ile 15m mumlar isteniyordu; Binance `startTime`'dan sonra açılan mumu döndürdüğü için sinyalin içinde bulunduğu 15m mum tamamen atlanıyordu. Stopların 17/32'si ilk 30 dakikada (medyan 0.48 saat) gerçekleştiğinden bu, shadow etiketlerini sistematik olarak iyimser yapıyordu. V2, 1m mumları sinyalin dakikasından başlatır.
+  - Sinyal dakikanın ortasındaysa o 1m mumun açılış/tepe/dip değerleri kısmen sinyal ÖNCESİNE aittir (kırılım sinyali dakika içi sert bir hareketin hemen ardından gelir). Bu mum yalnızca kapanışıyla, yani sinyalden sonraki ilk kesin fiyatla temsil edilir; aksi hâlde yükselişin başlangıç fiyatı sahte bir stop üretir.
   - Durum dosyası yok: çıktıdaki `(Anahtar, Etiket_Surumu)` çiftleri durumun kendisidir. Verisi eksik sinyal tekrar denenir; etiket tanımı değişince her şey otomatik yeniden etiketlenir (girdiler OHLCV olduğu için ucuzdur).
 - **`sniper/etiket_deposu.py`:** core/shadow/backfill ortak şeması; `Kaynak` kolonu modele **feature olarak verilmez**.
 
@@ -161,12 +164,12 @@ V18.3 çıkış mantığı saf bir modüle (`sniper/risk_motoru.py`) taşındı.
 | 1 | **KRİTİK** | `amount_to_precision` try **dışında** (satır 450/477/523); ccxt 0/küçük miktarda `InvalidOrder` fırlatır | Bakiyesi sıfırlanmış tek pozisyon (elle satış, teyit edilemeyen satış, ileride borsa-stop emrinde kilitli coin) exit koşuluna girer → tüm tur çöker → **diğer pozisyonların stop'u çalışmaz**, 30 dk'lık cüzdan senkronuna kadar | Sembol bazında izolasyon; sıfır/toz bakiye yakalanır, pozisyon takipten çıkarılır + bildirim |
 | 2 | **KRİTİK** | Toplu `fetch_tickers(semboller)` tek sembolde hata verirse (delist, BadSymbol) tüm istek düşer | Tek delist edilen coin → hiçbir pozisyonun fiyatı yok → **tüm stoplar kapalı** | Sembol bazında geri dönüş + "izlenemiyor" alarmı |
 | 3 | YÜKSEK | Satış miktarı cüzdandaki **tüm serbest bakiye** | Aynı coin elle tutuluyorsa ya da ikinci bot aynı hesabı kullanıyorsa onlar da satılır | Alımda net adet kaydedilir (komisyon düşülmüş), satış onu aşmaz. Eski pozisyonlar eski davranışta |
-| 4 | YÜKSEK | Market emir idempotent değil | Emir borsada gerçekleşir, cevap zaman aşımına uğrar → "başarısız" sayılır → sonraki turda kalanın yarısı **tekrar** satılır; tam çıkışta satış kaydı hiç düşmez | `newClientOrderId` + belirsiz hatada ID ile sorgu |
+| 4 | YÜKSEK | Market emir idempotent değil | Emir borsada gerçekleşir, cevap zaman aşımına uğrar → "başarısız" sayılır → sonraki turda kalanın yarısı **tekrar** satılır ya da aynı coin **iki kez alınır** (ilk lot stopsuz kalır); tam çıkışta satış kaydı hiç düşmez | `newClientOrderId`; yalnızca kesin retler (geçersiz emir, yetersiz bakiye, hatalı istek, yetki, rate-limit, timestamp) "gerçekleşmedi" sayılır, Binance `-1000/-1001/-1006` ("execution status unknown" → ccxt `OperationFailed`) ve yarım okunan cevap dahil diğer her hata ID ile sorgulanır. Teyit edilemeyen alımda 1 saat cooldown + uyarı; 0 dolumlu (EXPIRED) emir başarısız sayılır; emir sürerken cüzdan senkronu o coini sahiplenmez |
 | 5 | YÜKSEK | Kısmi satış istisna verince `continue` | LOT_SIZE vb. kalıcı hatada kısmi satış her turda denenir, **tam çıkış (stop) hiç kontrol edilmez**, fiyat stopun altına inse bile | Yarım satış hatasında koruyucu tam çıkış yine denenir |
 | 6 | YÜKSEK | Yarı satış sonrası `cikis = 0.005` sabiti | Moon bag +%5.2'de, ATR %2.8 (ilk eşik %5.6) → kalan yarı +%1 kilidi yerine **+%0.5'e kadar** tutulur. V18.3 kilidi 0.002→0.010 yükseltirken bu satır unutulmuş | `max(base_stop, 0.005)` |
 | 7 | ORTA | Min-notional altı pozisyonda hiçbir şey yapılmıyor | 1–5 USDT'lik kalıntı exit koşulunda **sonsuza dek** takılır, her 2 sn'de `fetch_balance` (ağırlık 20 → 600/dk boşa) | Takipten çıkarılır + bildirim |
 | 8 | ORTA | Cüzdan senkronu: bakiye await edilirken radar alım yapabilir; Redis görüntüsü bakiyeden **sonra** okunuyor | Taze alım Redis'te var, bakiyede yok → "toz" sanılıp silinir → 30 dk sonra yanlış giriş fiyatıyla sahiplenilir, `ai_data` kaybolur | Görüntü önce alınır, 10 dk'dan genç pozisyona dokunulmaz, sahiplenmeden önce canlı kontrol |
-| 9 | ORTA | Sahiplenme her >10 USDT'lik coini alır, eski alanları temizlemez | **Elle tutulan coin 4 saat sonra ZAMAN AŞIMI ile satılır**; eski bir `half_sold=1` kalıntısı yeni pozisyonda +%0.5'te anında çıkışa yol açar | Tüm alanlar sıfırlanır, bildirim, `.env`'de `MANUEL_COINLER` |
+| 9 | ORTA | Sahiplenme her >10 USDT'lik coini alır, eski alanları temizlemez | **Elle tutulan coin 4 saat sonra ZAMAN AŞIMI ile satılır**; eski bir `half_sold=1` kalıntısı yeni pozisyonda +%0.5'te anında çıkışa yol açar | Tüm alanlar sıfırlanır, bildirim; `.env`'de `MANUEL_COINLER`: bu coinler sahiplenilmez, alınmaz, V18.3'ün eskiden sahiplendiği pozisyonları dahil takipten çıkarılır ve emir katmanı satışı reddeder |
 | 10 | ORTA | `await telegram_mesaj_gonder` risk döngüsünün içinde (10 sn timeout) | Telegram yavaşken bir stop mesajı diğer pozisyonların kontrolünü 10 sn'ye kadar geciktirir | Kuyruk + ayrı görev; POST/JSON, 429'da bekleme, Markdown hatasında düz metin |
 | 11 | ORTA | Senkron Redis, `socket_timeout=None` | Redis takılırsa (BGSAVE fork, swap) **event loop sonsuza dek donar** | 3 sn timeout; pozisyon durumu tek round-trip'te okunur (önce pozisyon başına ~8 çağrı) |
 | 12 | ORTA | Pozisyon durumu 12 ayrı hash'te, tek tek HSET/HDEL | Temizlik ortasında hata → yarım durum (ör. kalan `half_sold`) | Alım/çıkış/sahiplenme tek MULTI/EXEC; alımda eski alanlar silinir |
@@ -200,7 +203,7 @@ V18.3 çıkış mantığı saf bir modüle (`sniper/risk_motoru.py`) taşındı.
 | `backfill_sinyaller.py` | yeni | §4.2 |
 | `sniper/*.py` | yeni | csv_kayit, risk_motoru, ozellikler, etiketleme, etiket_deposu, model_karti |
 | `tools/csv_onar.py` | yeni | kaymış yedeklerin onarımı |
-| `tests/` | yeni | 69 test: `pip install pytest fakeredis && python -m pytest tests/ -q` (borsa/Redis/Telegram gerekmez) |
+| `tests/` | yeni | 80 test: `pip install pytest fakeredis && python -m pytest tests/ -q` (borsa/Redis/Telegram gerekmez) |
 
 Yeni pip bağımlılığı yok (xgboost, pandas, pandas_ta, ccxt, redis, aiohttp mevcut; `XGBClassifier` scikit-learn'e ihtiyaç duyar, V18.3 de bunu kullandığı için sunucuda kurulu olmalı). Test takımı iki yığında geçti: Python 3.12 + pandas 2.3.3 / numpy 2.2.6 ve pandas 3.0.6 / numpy 2.2.6 (xgboost 3.4.1, pandas_ta 0.4.71b0, ccxt 4.5). pandas_ta 0.4.x zaten Python ≥3.12, pandas ≥2.3.2 istiyor.
 
@@ -239,3 +242,19 @@ Cron değişmez (02:45 labeler, 03:00 trainer). Trainer bir modeli yayına alır
 3. Borsa tarafı felaket stopu (§5'teki notla), systemd `WatchdogSec`.
 4. Canlı `OB_Oran_Yakin` / `Spread_Bps` / `Hacim_Hizi` ≥300 örneğe ulaşınca feature listesine ekleme ve karşılaştırma.
 5. Aylık backfill yenilemesi ve `ETIKET_SURUMU` değişince otomatik yeniden etiketleme.
+
+## 9. Bağımsız review
+Diff, gerçek parayla çalıştığı için ayrı bir ajan tarafından sıfırdan incelendi. Bulguların hepsi kod okumasıyla doğrulandı, düzeltildi, her birine regresyon testi yazıldı ve mutasyon testiyle kontrol edildi:
+
+| Bulgu | Önem | Düzeltme |
+|---|---|---|
+| Binance "execution status unknown" (`-1006`) ccxt'de `OperationFailed`, yani `NetworkError`'ın *üst* sınıfı; ilk sürüm bunu kesin hata sayıyordu → dolmuş alım kaydedilmez, aynı coin tekrar alınırdı | YÜKSEK | Kesin ret listesi dışındaki her hata sorgulanır (§5 #4) |
+| `MANUEL_COINLER` satışta kontrol edilmiyordu (V18.3'ün eskiden sahiplendiği pozisyon yine satılırdı) | YÜKSEK | Pozisyon takipten çıkarılır + emir katmanında satış reddi |
+| Farklı şemalı core dosyaları birleşince NaN `Pozisyon_Id` tüm eski pozisyonları tek anahtara çökertiyordu | ORTA | NaN→None temizliği |
+| Etiket penceresi sinyal öncesi fiyatı içeriyordu (sahte SL) | ORTA | Sinyal dakikası sadece kapanışla |
+| Backfill ağırlıklı eşik canlıda farklı oranda engelleyebilir | ORTA | Canlı-kantil eşiği + canlı engelleme oranı izleyicisi |
+| 0 dolumlu (EXPIRED) market emri dolmuş sayılıyordu (V18.3'te de vardı) | DÜŞÜK | Başarısız sayılır |
+| `csv_onar --birlestir` bot çalışırken satır kaybedebilirdi | DÜŞÜK | İyimser eşzamanlılık kontrolü, "botu durdurun" notu |
+| Ekonomik testte örnekler bağımsız sayılıyordu | DÜŞÜK | Episodun ilk sinyali |
+
+Review ayrıca şunları doğruladı: `risk_motoru` ile V18.3 arasında belgelenmemiş davranış farkı yok; VIP döngüsü tek bir pozisyon yüzünden ölemez; backfill'de look-ahead yok; CSV katmanı veri yok etmiyor; kod Python 3.10–3.12, pandas 2.2–3.0 ile çalışıyor.
