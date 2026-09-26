@@ -14,11 +14,13 @@
 | 1 | **"Veri kıtlığı" piyasa durgunluğu değil, bir veri kaybı olayı.** 20 Eylül 22:47'de trainer 655 satır / 512 pozisyon görüyor, 21 Eylül 03:00'te 5 satır / 4 pozisyon. `_append_csv`, başlıksız eski V1 dosyasını "şema göçü" sırasında boşaltıyor (birebir yeniden üretildi). | 512 pozisyonluk eğitim geçmişi pipeline'dan düştü |
 | 2 | **Canlıdaki iki model de doğrulamadan geçmemiş eski trainer ürünleri**, üstelik bot **bloklama modunda** (`AI_GOLGE_MOD = False`; doküman "gölge mod aktif" diyor). | Sinyallerin ~%70'i doğrulanmamış modelle bloklanıyor |
 | 3 | Filtre modeli, 73 pozisyonluk örneklem dışı veride **saf gürültü** (Spearman 0.01, p=0.52). Core modelin 0.65 eşiği sınırda bir ayrım gösteriyor (tek yönlü p≈0.045, çoklu test düzeltmesi yok, sıra korelasyonu ~0). | Filtre, işlem sayısını azaltıp veri kıtlığını büyütüyor |
-| 4 | AUC'nin 0.5'te sıkışmasının yapısal nedenleri: kayan etiket (USDT kârı + değişen çıkış mantığı), birbirinin tümleyeni iki etiket, sabit bir feature (`Sinyal_Encoded`: 163/163 sinyal MSB), tek 80/20 bölme ve her gece yeniden deneme (çoklu test). | Model mimarisi öğrenebilir durumda değil |
+| 4 | AUC'nin 0.5'te sıkışmasının yapısal nedenleri: kayan etiket (USDT kârı + değişen çıkış mantığı), birbirinin tümleyeni iki etiket, neredeyse sabit bir feature (`Sinyal_Encoded`: son 163 sinyalin tamamı, 4 aylık tarihçenin %98.8'i MSB), tek 80/20 bölme ve her gece yeniden deneme (çoklu test). | Model mimarisi öğrenebilir durumda değil |
 | 5 | VIP döngüsünde **2 kritik arıza modu** var; ikisi de *tüm* pozisyonların stop-loss'unu devre dışı bırakabiliyor (zehirli pozisyon, toplu ticker hatası). Bunlara ek olarak 4 yüksek önemde bulgu var. | Canlı para riski |
 | 6 | Shadow etiketleyici sinyalin içinde bulunduğu 15m mumu **tamamen atlıyor**; stopların 17/32'si ilk 30 dakikada gerçekleşiyor. | Shadow etiketleri sistematik olarak yanlı |
 
-**Önerilen sıra:** (1) bugün `AI_GOLGE_MOD = True` ve V18.4'ün risk düzeltmeleri; (2) kayıp verinin sunucuda aranması (§1.3); (3) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (4) trainer bir modeli kapılardan geçirirse bloklama moduna geçiş.
+**Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
+
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da.
 
 ---
 
@@ -44,7 +46,15 @@ ls -la *.bozuk_* *.legacy_* 2>/dev/null          # kenara alınmış dosya var m
 grep -c '^,,,,,,,,,,,,$' core_islem_verileri.csv   # boşaltılmış satır sayısı
 grep -n "CSV şeması güncellendi\|CSV bozuk görünüyor" <bot log dosyası>
 ```
-`.bozuk_*` varsa veri kurtarılabilir (`python tools/csv_onar.py <dosya> --v1-basliksiz`). Boş satırlar varsa veri o dosyada kalıcı olarak kaybolmuştur; VPS snapshot'ı/yedek aranmalı. Kaybolan veri V1 formatındaydı (3 feature), bu yüzden §4'teki backfill onu fazlasıyla telafi eder.
+`.bozuk_*` varsa veri kurtarılabilir (`python tools/csv_onar.py <dosya> --v1-basliksiz`). Boş satırlar varsa veri o dosyada kalıcı olarak kaybolmuştur.
+
+**Kurtarma yapıldı:** kullanıcının 16 Eylül öncesi yedeği (608 satır, 31 Mayıs – 14 Eylül) + V2 yedeği (52 satır, 16–20 Eylül) + güncel V1 (45 satır, 21–25 Eylül) = tam tarihçe. Yedekte iki kirlilik bulundu ve ayıklandı:
+- **Başka bir botun 9 işlemi** (6–14 Eylül): ana botun kodunda olmayan çıkış tipleri (`🏹 KADEMELİ/GÜÇLÜ/İLK TRAILING STOP`), 40 USDT büyüklük, komisyonsuz kayıt, 12–434 saat tutma (BTC 18 gün). REZ/USDT'deki −%30.9'luk kayıp (−12.36 USDT) bunlardan biri. Aynı dosyaya iki botun yazması tehlikelidir; ikinci botun ayrı klasör/Redis öneki kullanması gerekir.
+- **5 sahiplenilmiş bakiye**: feature'sız, sinyalsiz pozisyonlar. 18 Temmuz'da bir **stablecoin (USD1)** ve **~178 USDT'lik ENA** bakiyesi sahiplenilip zaman aşımıyla satıldı (−4.02 USDT). Bu, §5 #9'daki riskin gerçekte yaşanmış hâli.
+
+Temiz tarihçe `core_islem_verileri_v2_gecmis.onarildi.csv` olarak pakette; labeler bu adı otomatik okur ve 502 geçmiş pozisyonu tek tip etiketle etiketler (canlı dağılımdan gelen gerçek girişler, backfill'in kısmi mum farkını dengeler).
+
+Ayrıca **31 Mayıs – 5 Ağustos arası tüm işlemler komisyonsuz kaydedilmiş** (276 satır). O dönemin kayıtlı kârı gerçekte olduğundan iyi görünür; §10'daki hesaplar fiyatlardan komisyon dahil yeniden yapıldı.
 
 ### 1.4 Diğer veri sorunları
 - Yüklenen `core_islem_verileri_v2.csv`, `core_xgboost_model.json` ile **bayt bayt aynı** (md5 `9f70006a…`). Muhtemelen yükleme hatası; gerçek V2 dosyası elimde değil.
@@ -76,6 +86,8 @@ Birlikte uygulanan kural (`core<0.65 veya filtre>0.45`) 73 işlemin 51'ini (%70)
 
 ### 2.3 Mod çelişkisi
 Kod `AI_GOLGE_MOD = False`, doküman "GÖLGE MOD aktif". 23 Eylül'e kadar açılan işlemlerin 22'si bloklama kuralına takılırdı ama açıldı (gölge mod açıktı). 25 Eylül'deki işlemlerin tamamı eşiği geçenler ve ilk `AI_RED` kaydı 25 Eylül 11:14'te. Yani **bloklama 23–25 Eylül arasında açılmış**. Son günlerde hissedilen işlem azlığının bir kısmı bu.
+
+**Öneri (revize):** İlk sürümde gölge modu önermiştim, çünkü V18.3'te bloklama eğitim verisini kısıyordu. V18.4 labeler'ı engellenen (`AI_RED`) sinyalleri de aynı etiketle işlediği için bu gerekçe ortadan kalktı. Kanıt bu hâliyle: filtre modeli saf gürültü (p=0.52); core modelin 0.65 eşiği zayıf ama pozitif bir ayrım gösteriyor (p≈0.044). Strateji tarihsel olarak başa baş olduğundan (§10) daha az işlem daha düşük varyans demek. Bu yüzden **bloklama açık kalsın (`AI_GOLGE_MOD = False`), ama `filter_model.json` kaldırılsın** (`mv filter_model.json filter_model.json.emekli`). V3 trainer doğrulanmış bir model üretince eski core modelin yerini alır.
 
 ### 2.4 Yapısal nedenler
 1. **Kayan etiket.** Etiket gerçekleşen `Net_Kar_USDT`. Bu değer kasaya bağlı (balina 40, normal 20 USDT; ±0.1 USDT eşiği birinde %0.25, diğerinde %0.5) ve botun o haftaki çıkış mantığına bağlı (V18.3 kâr kilidini +%0.2'den +%1'e çekti, MAX_ATR_PCT 0.04→0.03). Aynı sinyal, bot sürümüne göre farklı etiket alıyor.
@@ -212,20 +224,17 @@ Yeni pip bağımlılığı yok (xgboost, pandas, pandas_ta, ccxt, redis, aiohttp
 ## 7. Deploy adımları
 
 ```bash
-# 0) Yedek + botu durdur
-cp -a /root /root_yedek_$(date +%F)
+# Ayrıntılı, sürükle-bırak adımları: KURULUM.md (paket: ai_bot_v18_4_paket.zip)
+# 0) Botu durdur + yedek
+cd /root && tar czf /root/yedek_$(date +%F).tgz --exclude=./venv .
 
-# 1) Kayıp veri kontrolü (§1.3)
+# 1) Paketin İÇİNDEKİLERİ /root'a kopyala (repo'nun tamamını DEĞİL: repodaki CSV/JSON'lar eski yükleme)
+# 2) Kontrol: /root/venv/bin/python tools/kurulum_kontrol.py   (❌ varsa başlatma)
 
-# 2) Dosyaları kopyala: ai_bot.py ai_trainer.py shadow_labeler.py backfill_sinyaller.py sniper/ tools/
-
-# 3) V2 yedeğini onar (labeler *.onarildi.csv dosyalarını otomatik okur)
-python tools/csv_onar.py core_islem_verileri_v2.csv.yedek
-
-# 4) Karar: ai_bot.py -> AI_GOLGE_MOD = True (önerilen; §2.2). İsteğe bağlı: filter_model.json'u yeniden adlandır.
+# 3) AI: mv filter_model.json filter_model.json.emekli   (§2.3)
 #    Elle tuttuğun coin varsa .env: MANUEL_COINLER=ETH,SOL
 
-# 5) Botu başlat (systemd önerilir: Restart=always)
+# 4) Botu başlat (systemd önerilir: Restart=always)
 
 # 6) Etiketle + backfill + kuru eğitim
 python shadow_labeler.py
@@ -234,7 +243,7 @@ python ai_trainer.py --kuru && cat egitim_raporu.json
 ```
 Cron değişmez (02:45 labeler, 03:00 trainer). Trainer bir modeli yayına alırsa bot 5 dk içinde otomatik yükler ve Telegram'dan bildirir.
 
-**Gölge moddan çıkış kriteri:** trainer `karar: yayinda` üretmeli, **ve** gölge modda en az 1–2 hafta boyunca canlı skorlarla gerçekleşen sonuçlar tutarlı olmalı (`egitim_raporu.json` → `canli_oos_auc`). Kart eşiği, sinyallerin ~%30'unu engelleyecek şekilde seçilir; canlıdaki `AI_RED` oranı bundan çok saparsa dağılım kaymıştır.
+**Yeni modele güven kriteri:** trainer `karar: yayinda` üretmeli ve `egitim_raporu.json` → `canli_oos_auc` ile `esik.canli_engelleme_havuz_esigiyle` makul olmalı. Kart eşiği sinyallerin ~%30'unu engelleyecek şekilde seçilir; canlı engelleme oranı bundan çok saparsa bot Telegram'dan uyarır (dağılım kayması).
 
 ## 8. Sonraki adımlar (öncelik sırasıyla)
 1. `SINYAL_KAPALI_MUM = True` denemesi (repaint + train/serve paritesi).
@@ -258,3 +267,44 @@ Diff, gerçek parayla çalıştığı için ayrı bir ajan tarafından sıfırda
 | Ekonomik testte örnekler bağımsız sayılıyordu | DÜŞÜK | Episodun ilk sinyali |
 
 Review ayrıca şunları doğruladı: `risk_motoru` ile V18.3 arasında belgelenmemiş davranış farkı yok; VIP döngüsü tek bir pozisyon yüzünden ölemez; backfill'de look-ahead yok; CSV katmanı veri yok etmiyor; kod Python 3.10–3.12, pandas 2.2–3.0 ile çalışıyor.
+
+## 10. Bütçe simülasyonu: gerçek işlem geçmişinin yeniden oynatılması
+`tools/gecmis_simulasyon.py` ile 31 Mayıs – 25 Eylül 2026 arasındaki **gerçek** işlemler (gerçek dolum fiyatları ve kayma dahil) bütçe kısıtıyla yeniden oynatıldı. Getiriler komisyon dahil fiyatlardan yeniden hesaplandı. Başka bottan karışan ve sahiplenilmiş satırlar hariç tutuldu.
+
+**Özet:** 538 pozisyon, işlem başına ortalama net getiri **+%0.05**, kazanma oranı **%40**.
+
+| Çıkış tipi | Pozisyon | Toplam (20 USDT kasa) | Ortalama |
+|---|---|---|---|
+| 📈 Trend takipli çıkış | 154 | **+130.2 USDT** | +%4.15 |
+| 🛑 Stop loss | 163 | **−107.1 USDT** | −%3.22 |
+| ⏳ Zaman aşımı | 132 | −18.0 USDT | −%0.67 |
+| 🛡️ Başa baş koruması | 84 | −1.7 USDT | −%0.10 |
+
+**Sabit kasa (botun ayarı: 20 USDT, balina 40), aylık net kâr:**
+
+| Ay | 100 USDT bütçe | 450 USDT bütçe |
+|---|---|---|
+| Mayıs (son gün) | −3.1 | −3.1 |
+| Haziran | −14.9 | −9.9 |
+| Temmuz | −5.8 | −8.4 |
+| Ağustos | **+19.8** | **+22.2** |
+| Eylül | +4.9 | +4.9 |
+| **Toplam (4 ay)** | **+0.96 USDT (%+1.0)** | **+5.76 USDT (%+1.3)** |
+| En büyük düşüş | −%26.4 (~−26 USDT) | −%5.2 (~−23 USDT) |
+| Bakiye yetmediği için atlanan | 35 işlem | 0 |
+
+**Rastgele bir 30 günlük dönem (89 pencere):**
+| | 100 USDT | 450 USDT |
+|---|---|---|
+| Medyan | +3.6 USDT (%+3.6) | +4.2 USDT (%+0.9) |
+| En kötü %10 | −13.3 USDT (−%13) | −13.3 USDT (−%3.0) |
+| En iyi %10 | +25.0 USDT (%+25) | +26.0 USDT (%+5.8) |
+| Kârlı pencere oranı | %54 | %54 |
+
+**Oransal kasa** (işlem başına özsermayenin %20'si, balinada %40): 4 ayda iki bütçe için de **%+0.8**, en büyük düşüş **−%22.7**. Aylık tutarlar bütçeyle doğrusal ölçeklenir; 450 USDT'de haziran −56, ağustos +79 USDT, 30 günlük medyan +18 USDT (en kötü %10: −54, en iyi %10: +102).
+
+**Yorum:**
+- Komisyon dahil strateji 4 ayda **başa baş**. Kârın tamamı trend ayı ağustostan geliyor; haziran ve temmuz zararda. Bir aylık sonuç yazı-tura: 30 günlük pencerelerin %54'ü kârlı.
+- **Sabit kasa ile bütçe kârı büyütmez:** 450 USDT'nin zaman ağırlıklı ortalama ~10 USDT'si kullanılıyor, zamanın %72'sinde hiç açık pozisyon yok. 100 USDT'de ise bot bakiye kontrolündeki %1 pay yüzünden aynı anda en fazla 4 pozisyon açabildi ve 35 işlemi atladı.
+- V18.3'ün ATR<%3 giriş filtresi geçmişe uygulansaydı sonuç +5.76 → −0.97 USDT olurdu. Elenen 57 yüksek ATR'li işlem net kârlıydı; örnek küçük, kesin sonuç değil.
+- **Sınırlar:** işlemler bot sürüm sürüm değişirken yapıldı (V16 → V18.3). Rejim filtresi (17 Eylül'den beri) ve AI bloklamasının geçmiş etkisi bu veriyle ölçülemez; eski modeller bu verinin üzerinde eğitildiği için onları geçmişe uygulamak iyimser olur. V18.4 mantığının geçmiş fiyat verisiyle backtest'i için backfill sinyalleri + `sniper/risk_motoru` kullanılarak sunucuda bir backtest yazılabilir. Geçmiş performans geleceği garanti etmez.

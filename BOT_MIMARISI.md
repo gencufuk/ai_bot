@@ -39,7 +39,7 @@ V18.4 CSV katmanı mevcut veriyi asla silmez: şema değişince yeni kolonlar so
 veya kaymış dosya bayt bayt arşivlenip (`.legacy_<ts>` / `.bozuk_<ts>`) Telegram'a bildirilir.
 
 ## AI Modları
-- **GÖLGE MOD (`AI_GOLGE_MOD = True`; önerilen — kodda şu an `False`, bkz. ANALIZ §2.3):** Model skorları her sinyalde
+- **GÖLGE MOD (`AI_GOLGE_MOD = True`; kodda şu an `False`. Öneri: bloklama açık kalsın ama gürültü olan `filter_model.json` kaldırılsın, bkz. ANALIZ §2.3):** Model skorları her sinyalde
   hesaplanır, loglanır ve CSV'lere yazılır ama **işlem bloklanmaz**. Sebep: mevcut
   modeller doğrulamada AUC ~0.46-0.50 (rastgele) çıktı; bloklama = rastgele işlem elemek.
 - **Bloklama modu (`AI_GOLGE_MOD = False`):** skor < eşik (kartlı modelde karttaki eşik, kartsızda
