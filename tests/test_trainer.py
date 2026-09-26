@@ -122,3 +122,17 @@ def test_esik_yeterli_canli_ornek_varsa_canli_kantilden(tmp_path, monkeypatch):
     assert e['canli_engelleme_havuz_esigiyle'] > 0.4           # havuz eşiği canlıda fazla engellerdi
     assert kart_oku(str(tmp_path / 'core_xgboost_model.json'))['esik'] == pytest.approx(e['esik'])
     assert rapor['ekonomik']['n_episod'] <= rapor['adaylar'][rapor['secilen']]['n_oos']
+
+
+def test_iki_hesabin_ayni_sinyali_canli_esikte_tek_olay_sayilir(tmp_path, monkeypatch):
+    """İki makinenin eğitim verisi birleşince aynı canlı sinyal iki satır olur (aynı coin, saniyeler arayla,
+    farklı anahtar). Canlı eşiğe geçiş satır sayısıyla değil bağımsız olay (episod) sayısıyla verilir."""
+    df = sentetik(1500, sinyal_gucu=1.0, seed=7, canli_orani=0.035)
+    ikinci = df[df['Kaynak'] == 'shadow'].copy()
+    ikinci['Anahtar'] = ikinci['Anahtar'] + '|ikinci_hesap'
+    ikinci['Ts'] = ikinci['Ts'] + 30_000
+    yollar = kur(tmp_path, monkeypatch, pd.concat([df, ikinci], ignore_index=True))
+    e = tr.egit(yollar, kuru=True)['esik']
+    assert e['n_canli_oos'] >= tr.MIN_CANLI_ESIK > e['n_canli_episod']
+    assert abs(e['n_canli_oos'] - 2 * e['n_canli_episod']) <= 2
+    assert e['esik_kaynagi'] == 'havuz'

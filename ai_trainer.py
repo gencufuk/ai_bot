@@ -69,7 +69,7 @@ BOOT_N, PERM_N = 2000, 5000
 SADECE_BTC_OK = True       # canlı bot BTC_OK=False iken sinyal analiz etmez: dağılımı eşle
 CANLI_KAYNAKLAR = ('core', 'shadow')
 CANLI_AGIRLIK = 1.0        # canlı örneklere ek ağırlık (dağılım kaymasında >1 denenebilir)
-MIN_CANLI_ESIK = 50        # bu kadar canlı OOS örnek varsa eşik canlı skorların kantilinden alınır
+MIN_CANLI_ESIK = 50        # bu kadar canlı OOS olay (episod) varsa eşik canlı skorların kantilinden alınır
 ESKI_FILTREYI_EMEKLI_ET = True
 
 # Varsayılan feature'lar: geçmişe dönük üretilebilen (backfill) ve ölçekten bağımsız olanlar.
@@ -337,15 +337,18 @@ def egit(yollar, kuru=False):
     eko = ekonomik_test(df['Etiket_Getiri'].to_numpy()[ilk_sinyal], oos[ilk_sinyal])
     eko['n_episod'] = int(ilk_sinyal.sum())
     canli = m & df['Kaynak'].isin(CANLI_KAYNAKLAR).to_numpy()
-    canli_auc = auc(y[canli], oos[canli]) if canli.sum() >= 40 else None
+    # Canlı kanıt bağımsız OLAY sayısıyla ölçülür: iki makinenin eğitim verisi birleşince aynı sinyal iki satır
+    # olur (aynı coin, dakikalar arayla); aynı episoddaki satırlar tek olaydır.
+    n_canli = int(df.loc[canli, 'episod'].nunique())
+    canli_auc = auc(y[canli], oos[canli]) if n_canli >= 40 else None
     esik_havuz = float(np.quantile(oos[m], ENGELLEME_ORANI))
-    esik_bilgi = {'esik_havuz': esik_havuz, 'n_canli_oos': int(canli.sum()),
+    esik_bilgi = {'esik_havuz': esik_havuz, 'n_canli_oos': int(canli.sum()), 'n_canli_episod': n_canli,
                   'canli_engelleme_havuz_esigiyle': float((oos[canli] < esik_havuz).mean()) if canli.sum() else None}
-    if canli.sum() >= MIN_CANLI_ESIK:
+    if n_canli >= MIN_CANLI_ESIK:
         esik_bilgi.update(esik=float(np.quantile(oos[canli], ENGELLEME_ORANI)), esik_kaynagi='canli')
     else:
         esik_bilgi.update(esik=esik_havuz, esik_kaynagi='havuz')
-    if esik_bilgi['canli_engelleme_havuz_esigiyle'] is not None and canli.sum() >= 20:
+    if esik_bilgi['canli_engelleme_havuz_esigiyle'] is not None and n_canli >= 20:
         log(f"   havuz eşiği canlı sinyallerin %{esik_bilgi['canli_engelleme_havuz_esigiyle'] * 100:.0f}'ini engellerdi "
             f"(hedef %{ENGELLEME_ORANI * 100:.0f}); eşik kaynağı: {esik_bilgi['esik_kaynagi']}")
     kat_ok = sum(1 for x in s['kat_auc'] if x is not None and x > 0.5)
@@ -355,7 +358,7 @@ def egit(yollar, kuru=False):
         'auc_alt_sinir': (s['ci95'][0] or 0) > 0.5,
         'kat_kararliligi': kat_ok >= math.ceil(0.6 * len(s['kat_auc'])),
         'ekonomik': eko['artis'] > 0 and eko['p'] < EKONOMIK_P,
-        'canli_transfer': canli_auc is None or canli.sum() < 100 or canli_auc >= 0.5,
+        'canli_transfer': canli_auc is None or n_canli < 100 or canli_auc >= 0.5,
     }
     rapor.update({'adaylar': {k: {kk: vv for kk, vv in v.items() if kk != '_oos'} for k, v in sonuclar.items()},
                   'secilen': en_iyi, 'ekonomik': eko, 'canli_oos_auc': canli_auc, 'kapilar': kapilar,

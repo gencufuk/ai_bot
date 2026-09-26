@@ -138,6 +138,19 @@ haftada bir) iki taraf `etiketli_sinyaller.csv` dosyasını karşıya `gelen_eti
 makinedeki eğitim verisi aynı olur ve iki hesabın işlemlerinden birlikte öğrenir. Etiketler fiyat verisinden
 hesaplandığı için iki hesabın verisi aynı derecede geçerlidir.
 
+İki bot aynı sinyale dakikalar arayla girerse bu olay eğitim verisinde iki satır olur (biri her hesaptan).
+Trainer aynı coinde 4 saat içindeki sinyalleri tek olay (episod) sayar: eğitimde toplam ağırlıkları 1'dir,
+doğrulama ve canlı veri eşikleri de olay sayısıyla hesaplanır.
+
+**İşlem kaydı neden paylaşılmaz.** AI `core_islem_verileri_v2.csv` dosyasından doğrudan öğrenmez. Etiketleyici her
+gece bu dosyadaki kapanmış işlemleri etiketleyip eğitim dosyasına ekler; eğitim dosyası paylaşıldığı için iki hesabın
+işlemleri iki AI'a da zaten ulaşır. İşlem kaydını da birleştirmek öğrenmeye bir şey eklemez, ama:
+- iki hesabın kâr/zarar kaydı karışır, hangi işlemin kimin olduğu ayırt edilemez;
+- simülasyonlar (`tools/v184_simulasyon.py`, `tools/gecmis_simulasyon.py`) işlemleri tek hesap ve tek bütçeyle
+  oynatır; iki hesabın aynı coine aynı anda girişi tek hesapta çakışır ve sonuçlar anlamsızlaşır.
+
+Bot işlem yaparken bu dosyayı okumaz, yalnız yazar; yani paylaşmak alım-satımı bozmaz, yalnız kayıtları karıştırır.
+
 İki hesap aynı sinyallere neredeyse aynı anda girer. Bu teknik bir sorun değildir, ama sonuçlar yüksek
 korelasyonlu olur: kötü bir hafta ikisini birden vurur.
 
