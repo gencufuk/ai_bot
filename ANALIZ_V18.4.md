@@ -472,3 +472,33 @@ Veri: kullanıcının sunucusundaki `etiketli_sinyaller.csv`. Toplam 2.923 sinya
   - Botun kendi son 10/20/30 sinyalinin sonucuna göre işlem açıp açmamak (rejim anahtarı) sonucu iyileştirmiyor.
 - **Sonuç:** Kayıp tek bir parametreden ya da çıkış mantığından gelmiyor. "Günün en çok yükselen 10 coinini kırılımda almak" girişinin 6 ayda kalıcı bir üstünlüğü görünmüyor; kazanç güçlü yükseliş dönemlerine (Ağustos) bağlı. Mevcut feature'larla iyi ve kötü sinyal ayrılamıyor; bu, trainer'ın AUC ≈ 0.5 bulgusuyla tutarlı.
 - **Seçenekler:** (1) olduğu gibi devam; (2) işlem tutarını düşürüp veri toplamaya devam (yarım satışlar 5.1 USDT alt sınırına takılmasın diye en az ~12 USDT); (3) farklı giriş fikirlerini (ör. kırılım anında değil geri çekilmede almak) sunucudaki fiyat verisiyle, dönem ayrımlı test etmek.
+
+## 11. Alım yöntemi araştırması: literatür ve test planı (30 Eylül)
+Soru: "son 24 saatte en çok yükseleni kırılımda al" girişi 6 ayda kalıcı bir üstünlük göstermedi (§10.6). Literatür bu konuda ne diyor, hangi alternatifler denenmeli?
+
+**Hakemli çalışmalar:**
+- **Kısa vadeli dönüş.** [Zaremba, Bilgin, Long, Mercik, Szczygielski (2021), *International Review of Financial Analysis* 78](https://ideas.repec.org/a/eee/finana/v78y2021ics1057521921002349.html). Veri: 3.600'den fazla coinin günlük fiyatı. Bulgular:
+  - Bir gün önce en az getiren coinler, en çok getirenlerden belirgin biçimde daha iyi getiri sağlıyor.
+  - Etkinin kaynağı coinlerin büyük çoğunluğunun likit olmaması.
+  - En büyük ve en likit birkaç coinde tersine, günlük momentum var.
+  - Botun radarındaki coinler (son 24 saatte en çok yükselen 10, çoğu orta ve küçük coin), bu çalışmanın düşük getiri beklediği grup.
+- **Gün içi.** Kriptoda gün içi momentum ve dönüş birlikte var. Dönüş, yatırımcıların bilgi içermeyen haberlere aşırı tepkisiyle açıklanıyor ([*North American Journal of Economics and Finance* 62, 2022](https://ideas.repec.org/a/eee/ecofin/v62y2022ics1062940822000833.html)).
+- **Anormal günden sonra.** BTC, ETH ve LTC'de anormal getirili bir günün ertesinde fiyat hareketleri büyüyor; aynı yönde işlem kârlı ([Caporale & Plastun (2020), *Financial Markets and Portfolio Management*](https://link.springer.com/article/10.1007/s11408-020-00357-1)). Bulgu büyük coinler için.
+- **Zaman serisi momentumu ve ilgi.** BTC, ETH ve XRP getirileri kendi geçmiş getirileri ve yatırımcı ilgisiyle tahmin edilebiliyor ([Liu & Tsyvinski (2021), *Review of Financial Studies* 34(6)](https://www.nber.org/papers/w24877)).
+- **Kesitsel faktörler.** Piyasa, büyüklük ve momentum (haftalık ufuk) faktörleri coinler arası getiri farklarını açıklıyor ([Liu, Tsyvinski & Wu (2022), *Journal of Finance* 77(2)](https://onlinelibrary.wiley.com/doi/abs/10.1111/jofi.13119)).
+- **Teknik analiz.** Fiyatın hareketli ortalamasına oranı, BTC'nin günlük getirisini hem örneklem içinde hem dışında tahmin ediyor ([Detzel, Liu, Strauss, Zhou, Zhu (2021), *Financial Management*](https://onlinelibrary.wiley.com/doi/epdf/10.1111/fima.12310)).
+- **Maliyet.** Her gün dengelenen kurallar günde portföyün yaklaşık 1–1.5 katını el değiştirir. İşlem başına %0.15 maliyetle bu günde %0.15–0.25 gider demek; brüt üstünlüğün bunu aşması gerekir. Momentum kârlarının kalıcılığı da tartışmalı ([*Financial Markets and Portfolio Management*, 2025](https://link.springer.com/article/10.1007/s11408-025-00474-9)).
+
+**Test planı** (`tools/strateji_arastirma.py`, Binance günlük verisi, sunucuda çalışır):
+- **Kurallar** (önceden seçildi, parametreleri sabit):
+  - `BOT_VEKILI`: botun radarının günlük vekili.
+  - `DONUS`, `DONUS_TREND`: dünün en çok düşenleri; trendli sürümde yalnız BTC 20 günlük ortalamasının üstündeyken.
+  - `BUYUK_MOMENTUM`: en büyük 10 coinden dünün en çok yükselen 3'ü.
+  - `HAFTALIK_MOM`: 7 günde bir, son 7 günün kazananları.
+  - `TREND_SEPET`: en büyük coinlerden 20 günlük ortalamasının üstündekiler.
+  - `TREND_DIP`: trenddeki coinlerden dünün en çok düşenleri.
+  - Karşılaştırma: BTC al-tut ve haftalık dengelenen sepet.
+- **Dönemler:** kuruluş 2023–2024, sınama 2025'ten bugüne. Ayrıca yıl yıl sonuç, parametre varyantları (yalnız bilgi amaçlı) ve komisyon duyarlılığı (%0.075 / %0.15 / %0.25) raporlanır.
+- **Sınır:** evren bugünün paritelerinden oluşuyor, delist olan coinler yok. Düşenleri alan kuralların sonucu bu yüzden iyimser.
+- **Doğrulama:** sentetik veride kuralların gelecek bilgisi kullanmadığı, portföy muhasebesi (kayma, devir, ücret) ve içine bilinen bir etki gömülmüş veride o etkinin bulunduğu test edildi (`tests/test_strateji_arastirma.py`).
+- Sonuçlar sunucu çalıştırmasından sonra §11.1'e yazılacak.

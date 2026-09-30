@@ -180,6 +180,11 @@ screen -dmS sim9 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_s
 tail -3 /root/sim_9ay.log         # ilerleme
 cat /root/v184_sim_9ay_rapor.txt  # bitince
 ```
+**Alım yöntemi araştırması** (literatürdeki kuralların günlük veride testi; ~5-10 dk, az bellek):
+```bash
+cd /root && nice -n 10 venv/bin/python -u tools/strateji_arastirma.py > strateji.log 2>&1
+cat /root/strateji_rapor.txt
+```
 
 ## Geri dönüş
 - Kod güncellemesini geri almak: botu durdurun, `eski_kod_<tarih>/` içindekileri `/root`'a geri taşıyın.
@@ -195,3 +200,4 @@ cat /root/v184_sim_9ay_rapor.txt  # bitince
   - `csv_onar.py`
   - `gecmis_simulasyon.py`
   - `v184_simulasyon.py`
+  - `strateji_arastirma.py`

@@ -88,7 +88,7 @@ from sniper.ozellikler import MUM_15M_MS, SinyalAyarlari, ohlcv_df, ozellik_matr
 DK_MS = 60_000
 SAAT_MS = 3_600_000
 GUN_MS = 86_400_000
-TF_MS = {'1m': DK_MS, '15m': MUM_15M_MS, '1h': SAAT_MS}
+TF_MS = {'1m': DK_MS, '15m': MUM_15M_MS, '1h': SAAT_MS, '4h': 4 * SAAT_MS, '1d': GUN_MS}
 
 # ai_bot.py V18.4 RISK_AYAR ile aynı (tests/test_v184_simulasyon.py karşılaştırır)
 RISK_V184 = risk.RiskAyarlari(fee_rate=0.001, zarar_orani_balina=0.020, kar_kilidi_oran=0.010,
