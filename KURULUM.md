@@ -180,9 +180,17 @@ screen -dmS sim9 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_s
 tail -3 /root/sim_9ay.log         # ilerleme
 cat /root/v184_sim_9ay_rapor.txt  # bitince
 ```
-Deney, "yükselişi erken yakala": radar son 4 saatte en çok yükselenleri tarar (canlı bot 24 saat). Önbellek varsa 20-40 dk sürer; sonuç 9 aylık raporla karşılaştırılır:
+**Deneyler.** Önbellek doluyken her biri 10-30 dk sürer. `--bitis` karşılaştırılan çalıştırmaları aynı tarih
+aralığına sabitler. İlerleme: `tail -n 2 /root/sim_*.log` ("Çıktılar: …" satırı görününce o çalıştırma bitmiştir).
+- "Yükselişi erken yakala": radar son 4 saatte en çok yükselenleri tarar (canlı bot 24 saat). 30 Eylül'de yapıldı,
+  4 saatlik radar daha kötü çıktı (ANALIZ §11.3). Taban ve deney aynı kodla, arka arkaya:
 ```bash
-screen -dmS r4 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --kaynak backfill --mod sabit --radar-saat 4 --cikti /root/v184_sim_9ay_r4 > sim_r4.log 2>&1"
+screen -dmS deney bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --bitis 2026-09-30 --kaynak backfill --mod sabit --cikti /root/v184_sim_9ay_r24 > sim_r24.log 2>&1; nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --bitis 2026-09-30 --kaynak backfill --mod sabit --radar-saat 4 --cikti /root/v184_sim_9ay_r4 > sim_r4.log 2>&1"
+```
+- "Daha erken sat": canlı kurulumun aynı sinyalleri başka çıkış ayarlarıyla da oynatılır. Tek çalıştırmadır; her deney
+  raporda bir `B_<AD>` senaryosu olur. Alanlar `sniper/risk_motoru.py` içindeki `RiskAyarlari`:
+```bash
+screen -dmS cikis bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --bitis 2026-09-30 --kaynak backfill --mod sabit --cikis-deneyi STOP20:stop_min=0.02 STOP15:stop_min=0.015 ZAMAN2:max_bekleme_saati=2 KISMI2:ilk_esik_min=0.02,ilk_esik_max=0.04 KILIT15:kar_kilidi_tetik=0.015 ERKEN:ilk_esik_min=0.02,ilk_esik_max=0.04,kar_kilidi_tetik=0.015,max_bekleme_saati=2 --cikti /root/v184_sim_9ay_cikis > sim_cikis.log 2>&1"
 ```
 **Alım yöntemi araştırması** (literatürdeki kuralların günlük veride testi; ~5-10 dk, az bellek):
 ```bash

@@ -685,6 +685,44 @@ def test_backfill_senaryolari_ayni_havuzu_suzer():
     assert [x['sembol'] for x in vs.backfill_senaryolari(tablo, Yeni())['B_V1802']] == ['A', 'B', 'C', 'D', 'E', 'G']
 
 
+def test_cikis_deneyleri_ayristirma():
+    d = vs.cikis_deneyleri(['stop15:stop_min=0.015', 'ERKEN:ilk_esik_min=0.02, ilk_esik_max=0.04'])
+    assert d == {'STOP15': {'stop_min': 0.015}, 'ERKEN': {'ilk_esik_min': 0.02, 'ilk_esik_max': 0.04}}
+    assert vs.cikis_deneyleri(None) == {} and vs.cikis_deneyleri([]) == {}
+    for yanlis in ('STOP15', 'STOP15:', 'A:stop=0.01', 'A:stop_min', 'A:stop_min=yuzde', 'V184_AI:stop_min=0.01',
+                   'COK_UZUN_BIR_AD:stop_min=0.01', 'A-B:stop_min=0.01'):
+        with pytest.raises(ValueError):
+            vs.cikis_deneyleri([yanlis])
+    with pytest.raises(ValueError):
+        vs.cikis_deneyleri(['A:stop_min=0.01', 'a:stop_min=0.02'])          # aynı ad iki kez
+
+
+def test_backfill_senaryolari_cikis_deneyi_canli_filtreyi_kullanir():
+    """B_<AD>: canlı kurulumun (B_V184_AI) sinyalleri, deneyin çıkış bacaklarıyla; komisyon deneyin ayarından."""
+    satirlar = []
+    for sembol, atr, rejim, btc, skor in (('A', 2.0, 'TREND', True, 0.9), ('B', 3.5, 'TREND', True, 0.9),
+                                          ('C', 2.0, 'YATAY', True, 0.9), ('D', 2.0, 'TREND', True, 0.3),
+                                          ('F', 2.0, 'TREND', False, 0.9)):
+        r = _b_satir(sembol, atr, rejim, btc, True, skor)
+        r['_X_SIKI_bacaklar'] = [(T0 + 60_000, 1.0, 99.0, 'S')]
+        satirlar.append(r)
+    tablo = pd.DataFrame(satirlar)
+
+    class Eski:
+        kart, esik = None, 0.65
+
+        def blokla_mi(self, s):
+            return s < self.esik
+    deney = {'SIKI': vs.CikisMotoru(replace(vs.RISK_V184, stop_min=0.01, fee_rate=0.00075))}
+    sen = vs.backfill_senaryolari(tablo, Eski(), deneyler=deney)
+    assert [x['sembol'] for x in sen['B_SIKI']] == [x['sembol'] for x in sen['B_V184_AI']] == ['A']
+    assert sen['B_SIKI'][0]['bacaklar'][0][2] == pytest.approx(risk.net_oran(100.0, 99.0, 0.00075))
+    assert sen['B_V184_AI'][0]['bacaklar'][0][2] == pytest.approx(risk.net_oran(100.0, 101.0, FEE))
+    # AI yoksa taban B_V184 (AI şartı yok): A ve D
+    assert [x['sembol'] for x in vs.backfill_senaryolari(tablo, None, deneyler=deney)['B_SIKI']] == ['A', 'D']
+    assert 'B_SIKI' not in vs.backfill_senaryolari(tablo, Eski())
+
+
 def test_aylik_bolum_ay_sonu_bakiye_ve_senaryo_tablosu():
     def satir(ad, butce, aylik, kar, n, mod='sabit'):
         return {'senaryo': ad, 'butce': butce, 'mod': mod, 'islem': n, 'toplam_kar': kar,
@@ -766,3 +804,35 @@ def test_uctan_uca_backfill_eski_kartsiz_modelle(dunya, tmp_path):
     s4 = vs.calistir(dunya, a4, simdi_ms=T0_BF + 14 * 86_400_000, log=lambda *x: None)
     assert any('DENEY: radar son 4 saatte' in n for n in s4['meta']['notlar'])
     assert (tmp_path / 'r4_rapor.txt').exists()
+
+
+def test_uctan_uca_cikis_deneyi(dunya, tmp_path):
+    import xgboost as xgb
+    rng = np.random.default_rng(1)
+    X = pd.DataFrame({'Giris_RSI': rng.uniform(55, 90, 400), 'Giris_Vol_Oran': rng.uniform(2.5, 9, 400),
+                      'Giris_ATR_Pct': rng.uniform(0.3, 4.0, 400), 'Sinyal_Encoded': 1.0})
+    m = xgb.XGBClassifier(n_estimators=20, max_depth=2).fit(X, (X['Giris_Vol_Oran'] > 4.5).astype(int))
+    model = tmp_path / 'core_xgboost_model.json'
+    m.save_model(str(model))
+    a = vs.arguman_ayristirici().parse_args([
+        '--baslangic', str(pd.Timestamp(T0_BF + 6 * 86_400_000, unit='ms')), '--kaynak', 'backfill',
+        '--onbellek', str(tmp_path / 'onb'), '--cikti', str(tmp_path / 'sim'), '--ai-model', str(model),
+        '--evren', '2', '--butce', '100', '--mod', 'sabit',
+        '--cikis-deneyi', 'AYNI:stop_min=0.025', 'SIKI:stop_min=0.004,stop_max=0.004,max_bekleme_saati=0.5'])
+    sonuc = vs.calistir(dunya, a, simdi_ms=T0_BF + 14 * 86_400_000, log=lambda *x: None)
+    sen = sonuc['senaryolar']
+    assert set(sen) == set(vs.B_SENARYOLAR) | {'B_AYNI', 'B_SIKI'}
+    assert sen['B_V184_AI'], 'sentetik dünyada canlı kurulum en az bir sinyale girmeli'
+    assert sen['B_AYNI'] == sen['B_V184_AI']                     # canlı ayarla deney: birebir aynı işlemler
+    k = lambda ad: [(x['sembol'], x['giris_ms']) for x in sen[ad]]  # noqa: E731
+    assert k('B_SIKI') == k('B_V184_AI')                          # aynı sinyaller, farklı çıkış
+    assert [vs._islem_getirisi(x) for x in sen['B_SIKI']] != [vs._islem_getirisi(x) for x in sen['B_V184_AI']]
+    fark = sonuc['backfill_karsilastirma']['fark']
+    assert fark['B_AYNI']['ort'] == pytest.approx(0.0, abs=1e-15)
+    bt = pd.read_csv(tmp_path / 'sim_backfill.csv')
+    assert {'X_AYNI_getiri', 'X_SIKI_getiri'} <= set(bt.columns)
+    metin = (tmp_path / 'sim_rapor.txt').read_text(encoding='utf-8')
+    assert 'DENEY (çıkış): B_AYNI, B_SIKI' in metin
+    assert 'B_SIKI: B_V184_AI sinyalleri, çıkış: stop_min=0.004 (canlı 0.025), stop_max=0.004 (canlı 0.055)' in metin
+    with pytest.raises(SystemExit):
+        vs.calistir(dunya, vs.arguman_ayristirici().parse_args(['--cikis-deneyi', 'X:yok=1']), log=lambda *x: None)

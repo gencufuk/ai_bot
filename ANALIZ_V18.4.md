@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor. Kullanıcının "yükselişi erken yakala" fikri 9 ayda test edildi (§11.3): 4 saatlik radar 24 saatlikten kötü, canlı radar değişmedi. Kaybettiren çıkışların %86'sı stop; stopların yarısı alımdan sonraki 32 dakikada. "Daha erken sat" fikri için çıkış ayarları aynı sinyallerde karşılaştırılacak (`--cikis-deneyi`).
 
 ---
 
@@ -596,6 +596,63 @@ Rapor ve günlük getiriler: `veri/arastirma_2026-09-30/strateji_rapor.txt`, `st
 - **Telegram fiyatları ~6 anlamlı basamakla yazılır.** Eskiden 4 ondalıkla yazıldığı için ucuz coinlerde giriş ve çıkış fiyatı aynı görünüyordu (`0.0007 ➔ 0.0007`).
 - **Kartsız model sürümü dosya içeriğinden türetilir** (`legacy-<sha256[:8]>`). Aynı model iki sunucuda aynı adı taşır.
 - **BTC bağlamı vektörel hesaplanır.** Pencere-başı EMA kapalı formla, ADX tüm seriden. Eski döngüyle kararlar birebir aynı (testte iki seri; EMA farkı ~1e-13, ADX ~1e-6); ~130 kat hızlı. 9 aylık simülasyonda sunucuda ~1 saat süren adım yarım dakikaya iner.
-- **Simülatöre `--radar-saat` deneyi eklendi.** Kullanıcının "yükselişi erken yakala" fikri için: radar son N saatte en çok yükselenleri tarar (canlı bot 24). Sonuç bekleniyor.
+- **Simülatöre `--radar-saat` deneyi eklendi.** Kullanıcının "yükselişi erken yakala" fikri için: radar son N saatte en çok yükselenleri tarar (canlı bot 24). Sonuç §11.3'te: 4 saatlik radar daha kötü.
 
 **Kullanıcı tarafı:** Binance'te komisyonu BNB ile ödemek ücreti %25 düşürür (işlem başına %0.1 → %0.075). 9 aylık simülasyonun 685 işleminde (20 USDT) bu ~6.9 USDT eder; −30.2 USDT'lik zararın yaklaşık dörtte biri.
+
+### 11.3 "Yükselişi erken yakala" deneyi: 4 saatlik radar (30 Eylül, sunucu)
+**Kurulum.** Sunucuda aynı kodla iki çalıştırma yapıldı: 1 Ocak – 29 Eylül girişleri (`--bitis 2026-09-30`), 250 coin. Tek fark radarın penceresi: canlı bot son 24 saatte en çok yükselen 10 pariteye bakar, deney son 4 saattekilere. Raporlar `veri/arastirma_2026-09-30/v184_sim_9ay_r24_rapor.txt` ve `..._r4_rapor.txt`. 24 saatlik çalıştırma önceki 9 aylık raporla neredeyse aynı (−30.10 / −30.23 USDT). Küçük fark, kara liste kuralı düzeltmesinden (§11.2) ve bitiş anından geliyor.
+
+**Canlı kurulum (B_V184_AI):**
+
+| | 24 saat (canlı) | 4 saat (deney) |
+|---|---|---|
+| Sinyal (bütçe kuralı olmadan) | 1032 | 1374 |
+| Sinyal başı net | %−0.10 | %−0.19 |
+| Kazanan | %44 | %42 |
+| 450 USDT: işlem / kâr / en büyük düşüş | 684 / −30.10 / %−10.1 | 938 / −47.16 / %−13.2 |
+| 100 USDT: işlem / kâr | 607 / −35.66 | 734 / −41.84 |
+
+**Fark gerçek mi?** İki çalıştırma aynı günleri yaşadığı için gün bloklu bootstrap aynı günleri iki tarafa birlikte örnekler (4000 tekrar):
+- Sinyal başı fark (4s − 24s): −0.09 puan, %95 GA [−0.22, +0.03].
+- Günlük toplam (işlem başına 20 USDT): −0.19 USDT/gün, %95 GA [−0.34, −0.03]. 4 saatlik radar daha çok işlem açıyor ve her işlem ortalamada daha kötü; günlük zarar belirgin biçimde artıyor.
+- Yarılar: 17 Mayıs'a kadar +0.06 puan [−0.08, +0.20], sonrasında −0.24 puan [−0.45, −0.04]. Hiçbir yarıda anlamlı iyileşme yok.
+
+**Neden?** Aynı giriş aynı çıkışı verir (979 ortak sinyalde iki çalıştırmanın getirisi ve AI skoru birebir aynı). Fark, yalnız bir radarın bulduğu sinyallerden geliyor:
+
+| Sinyal | n | Sinyal başı | Kazanan | Girişte 24s değişim (medyan) |
+|---|---|---|---|---|
+| İki radarda da | 979 | %−0.12 | %44 | %8.8 |
+| Yalnız 4s radar ("erken") | 395 | %−0.36 | %37 | %3.5 |
+| Yalnız 24s radar | 53 | %+0.33 | %42 | %4.9 |
+
+Erken yakalanan coinlerin çoğunda yükseliş devam etmiyor. **Sonuç: canlı radar 24 saat kalır.**
+
+**Zarar nereden geliyor?** 24 saatlik çalıştırmada canlı kuruluma giren 1032 sinyalin çıkış tipleri:
+
+| Çıkış | Pay | Ort. net | Toplam (20 USDT) | Medyan süre |
+|---|---|---|---|---|
+| Stop | %36 | %−2.87 | −213.2 | 0.5 saat |
+| Zaman aşımı (4 saatte < %0.5) | %21 | %−0.76 | −33.2 | 4.0 saat |
+| Momentum öldü (yatay rejim) | %4 | %−0.15 | −1.2 | 2.5 saat |
+| Kâr kilidi (+%1) | %13 | %+0.85 | +22.1 | 0.6 saat |
+| Moon bag + takip | %7 | %+5.95 | +85.7 | 1.5 saat |
+| Kısmi kâr + takip | %19 | %+3.00 | +119.5 | 1.9 saat |
+
+Kaybettiren çıkışların toplamının %86'sı stoplardan geliyor; stopların yarısı alımdan sonraki 32 dakika içinde. Kârı ise az sayıda büyük kazanan taşıyor. Bu yüzden kârı erken almak (§11.2: sabit hedefler) sonucu kötüleştirdi.
+
+**Giriş özellikleri** (girişteki 24s değişim, RSI, hacim oranı, ATR, AI skoru, balina, saat). Her biri kovalara ayrıldı; iki yarıda aynı yönde ve yeterli sayıda olan etki arandı:
+- AI filtresi olmayan havuzda (2235 sinyal) skoru 0.65'in altındaki üç kova da iki yarıda eksi (sinyal başı %−0.22 ile %−0.45). Mevcut AI filtresi işe yarıyor; önceki raporla tutarlı (B_V184_AI − B_V184 = +0.15 puan [+0.02, +0.29]).
+- Eşiği 0.90'a çıkarmak: sinyal başı +0.14 puan [−0.17, +0.46], günlük +0.14 USDT [−0.19, +0.41]. Anlamlı değil, işlem sayısı %70 düşüyor. Uygulanmadı.
+- BTC günlük trend kapısı (dünkü kapanış 20/50/100 günlük ortalamanın üstünde): üç uzunlukta da yarılar arasında tutarsız. Uygulanmadı.
+- 17–23 UTC girişleri iki yarıda da artıda (+%0.23 / +%0.17, n=240). Ancak ~30 kova denendi, biri tesadüfen tutarlı çıkabilir. Keşif bulgusu olarak kaldı, uygulanmadı.
+
+**Sonraki deney: "daha erken sat", çıkış tarafı.** Simülatöre `--cikis-deneyi` eklendi. Canlı kurulumun AYNI sinyalleri başka çıkış ayarlarıyla da oynatılır; her deney bir `B_<AD>` senaryosudur. Raporun 5. bölümü canlı kuruluma göre farkı aynı günlerle verir. Aynı ayarla çalışan bir deney canlı kurulumla birebir aynı işlemleri üretir; bu testle doğrulandı. Önerilen varyantlar:
+- `STOP20`: stop tabanı %2 (canlı %2.5).
+- `STOP15`: stop tabanı %1.5. Gerekçe: stop olan işlemler neredeyse hiç yükselmiyor (§10.6: stop olanların medyan tepe kârı +%0.38).
+- `ZAMAN2`: zaman aşımı 2 saat (canlı 4).
+- `KISMI2`: ilk kısmi kâr eşiği %2–4 (canlı %3–6).
+- `KILIT15`: kâr kilidi tetiği %1.5 (canlı %2.5).
+- `ERKEN`: son üçü birlikte.
+
+Karar kuralı önceden belli: bir varyant yalnız 9 ayın tamamında ve iki yarıda ayrı ayrı canlı kurulumdan iyiyse, günlük fark GA'sı sıfırı dışlıyorsa ve bütçe sonucunda da iyileşme varsa önerilir. Canlı ayar kullanıcı onayı olmadan değişmez.

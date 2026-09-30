@@ -58,6 +58,9 @@ Yalnız piyasa taraması, eski raporu ezmeden:  ... --kaynak backfill --cikti /r
 Uzun dönem (ör. 9 ay, 250 sembol; 1-2 saat, ~1 GB disk önbelleği, ~1 GB bellek; screen içinde çalıştırın):
   ... --baslangic 2026-01-01 --kaynak backfill --mod sabit --cikti /root/v184_sim_9ay
 Raporun 6. bölümü ay ay kâr ve ay sonu bakiyesini verir.
+Çıkış deneyi: canlı kurulumun AYNI sinyalleri başka çıkış ayarlarıyla da oynatılır (her deney bir B_<AD> senaryosu;
+5. bölümde canlı kuruluma göre fark). Alanlar sniper/risk_motoru.py RiskAyarlari:
+  ... --kaynak backfill --cikis-deneyi STOP15:stop_min=0.015 ZAMAN2:max_bekleme_saati=2 --cikti /root/v184_sim_cikis
 """
 import argparse
 import datetime
@@ -65,10 +68,11 @@ import glob
 import json
 import os
 import pickle
+import re
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -125,6 +129,33 @@ SENARYO_ACIKLAMA = {
 }
 B_SENARYOLAR = ['B_V184', 'B_REJIMSIZ', 'B_V184_AI', 'B_AI_ATR4', 'B_AI_REJIMSIZ', 'B_V1802']
 B_AI_SENARYOLARI = ('B_V184_AI', 'B_AI_ATR4', 'B_AI_REJIMSIZ')
+
+
+def cikis_deneyleri(tanimlar) -> Dict[str, dict]:
+    """--cikis-deneyi 'AD:alan=deger[,alan=deger...]' -> {AD: {alan: deger}}. Alanlar risk.RiskAyarlari'nın
+    alanlarıdır (ör. stop_min=0.015: dinamik stopun alt sınırı %1.5). Her deney B_<AD> senaryosu olur: canlı
+    kurulumun (B_V184_AI) sinyalleri, bu çıkış ayarlarıyla."""
+    alanlar = {f.name for f in fields(risk.RiskAyarlari)}
+    sonuc = {}
+    for t in tanimlar or ():
+        ad, _, govde = str(t).partition(':')
+        ad = ad.strip().upper()
+        if not re.fullmatch(r'[A-Z0-9_]{1,11}', ad) or not govde.strip():
+            raise ValueError(f"'{t}': biçim AD:alan=deger[,alan=deger] olmalı (AD en çok 11 harf/rakam)")
+        if 'B_' + ad in SENARYO_ACIKLAMA or ad in sonuc:
+            raise ValueError(f"'{t}': {ad} adı başka bir senaryoda kullanılıyor")
+        degerler = {}
+        for parca in govde.split(','):
+            k, esit, v = parca.partition('=')
+            k = k.strip()
+            if not esit or k not in alanlar:
+                raise ValueError(f"'{t}': bilinmeyen alan '{k}' (geçerli alanlar: {', '.join(sorted(alanlar))})")
+            try:
+                degerler[k] = float(v)
+            except ValueError:
+                raise ValueError(f"'{t}': {k} için sayı bekleniyor, '{v}' geldi") from None
+        sonuc[ad] = degerler
+    return sonuc
 
 
 def _ms(ts) -> int:
@@ -768,10 +799,12 @@ def gercek_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, L
 # Kaynak 2: backfill sinyalleri
 # ------------------------------------------------------------------------------------------
 def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: CikisMotoru, yuva,
-                    semboller=None, log=print, motor_eski: Optional[CikisMotoru] = None, radar_mum: int = 96):
+                    semboller=None, log=print, motor_eski: Optional[CikisMotoru] = None, radar_mum: int = 96,
+                    deney_motorlari: Optional[Dict[str, CikisMotoru]] = None):
     """Sinyaller Ağustos kapsamında üretilir (ATR <= %4, BTC durumundan bağımsız); senaryo filtreleri
     backfill_senaryolari'nda uygulanır. V18.4 çıkışı V18.4 BTC onayı olan sinyallere, V18.0.2 çıkışı
-    (motor_eski) Ağustos botunun gireceği sinyallere (eski BTC kuralı + eski AI) simüle edilir."""
+    (motor_eski) Ağustos botunun gireceği sinyallere (eski BTC kuralı + eski AI) simüle edilir.
+    deney_motorlari (--cikis-deneyi): canlı kurulumun gireceği sinyallere ayrıca simüle edilir (X_<AD>_* kolonları)."""
     semboller = semboller or bf.evren_sec(ex, evren_n)
     veri_bas = bas_ms - bf.ISINMA_MUM * MUM_15M_MS
     seriler15 = {}
@@ -823,6 +856,10 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
         eski_ai_gecer = eski_ai is None or (ai_skor is not None and not eski_ai.blokla_mi(ai_skor))
         gerek = {'V184': (motor, btc_ok),
                  'ESKI': (motor_eski, motor_eski is not None and btc_ok_eski and eski_ai_gecer)}
+        if deney_motorlari:
+            canli = (btc_ok and depo_etiket.sayi(x.get('Giris_ATR_Pct'), 99.0) <= MAX_ATR_V184
+                     and x['Rejim'] == 'TREND' and (yuva is None or (ai_skor is not None and not yuva.blokla_mi(ai_skor))))
+            gerek.update({'X_' + ad: (m, canli) for ad, m in deney_motorlari.items()})
         if not any(g for _, g in gerek.values()):
             continue
         giris = float(x['Fiyat']) * (1 + ALIM_KAYMASI)
@@ -853,10 +890,14 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
     return pd.DataFrame(satirlar), yuva
 
 
-def backfill_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, List[dict]]:
+def backfill_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None,
+                         deneyler: Optional[Dict[str, CikisMotoru]] = None) -> Dict[str, List[dict]]:
     """Bütün backfill senaryoları AYNI sinyal havuzunu süzer (bkz. modül açıklaması). V18.4 senaryoları
-    V18.4 çıkışını, B_V1802 V18.0.2 çıkışını kullanır. B_V1802'nin AI'ı yalnız kartsız eski modeldir."""
+    V18.4 çıkışını, B_V1802 V18.0.2 çıkışını kullanır. B_V1802'nin AI'ı yalnız kartsız eski modeldir.
+    deneyler (--cikis-deneyi): B_<AD> = canlı kurulumun (B_V184_AI; AI yoksa B_V184) sinyalleri, deneyin çıkışıyla."""
+    deneyler = deneyler or {}
     sen = {ad: [] for ad in B_SENARYOLAR}
+    sen.update({'B_' + ad: [] for ad in deneyler})
     if yuva is None:
         for ad in B_AI_SENARYOLARI:
             sen.pop(ad)
@@ -864,20 +905,20 @@ def backfill_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str,
     if tablo.empty:
         return sen
 
-    def islem(r, bacaklar):
+    def islem(r, bacaklar, fee=RISK_V184.fee_rate):
         return {'sembol': r['sembol'], 'giris_ms': int(r['giris_ms']), 'kasa_tipi': r['kasa_tipi'],
-                'bacaklar': [(x[0], x[1], risk.net_oran(r['giris_fiyat'], x[2], RISK_V184.fee_rate)) for x in bacaklar],
+                'bacaklar': [(x[0], x[1], risk.net_oran(r['giris_fiyat'], x[2], fee)) for x in bacaklar],
                 'son_mesaj': bacaklar[-1][3]}
 
     for _, r in tablo.sort_values(['giris_ms', 'degisim_24s'], ascending=[True, False]).iterrows():
         skor = r.get('ai_skor')
         skor = float(skor) if skor is not None and pd.notna(skor) else None
+        atr3, trend = depo_etiket.sayi(r.get('atr_pct'), 99.0) <= MAX_ATR_V184, r.get('rejim') == 'TREND'
+        ai = (yuva is not None and skor is not None and not yuva.blokla_mi(skor)
+              and (ai_bas_ms is None or r['giris_ms'] > ai_bas_ms))
         b = r.get('_V184_bacaklar')
         if isinstance(b, list) and b and _dogru_mu(r.get('btc_ok')):
             x = islem(r, b)
-            atr3, trend = r['atr_pct'] <= MAX_ATR_V184, r['rejim'] == 'TREND'
-            ai = (yuva is not None and skor is not None and not yuva.blokla_mi(skor)
-                  and (ai_bas_ms is None or r['giris_ms'] > ai_bas_ms))
             if atr3:
                 sen['B_REJIMSIZ'].append(x)
                 if trend:
@@ -889,6 +930,11 @@ def backfill_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str,
                     sen['B_AI_ATR4'].append(x)
                 if atr3:
                     sen['B_AI_REJIMSIZ'].append(x)
+        if deneyler and _dogru_mu(r.get('btc_ok')) and atr3 and trend and (ai or yuva is None):
+            for ad, m in deneyler.items():
+                d = r.get(f'_X_{ad}_bacaklar')
+                if isinstance(d, list) and d:
+                    sen['B_' + ad].append(islem(r, d, m.ayar.fee_rate))
         e = r.get('_ESKI_bacaklar')
         if (isinstance(e, list) and e and _dogru_mu(r.get('btc_ok_eski')) and r['atr_pct'] <= MAX_ATR_V1802
                 and (eski_ai is None or (skor is not None and not eski_ai.blokla_mi(skor)))):
@@ -1145,7 +1191,8 @@ def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu, backfill=None) 
             y.append(f"   {adlar.get(ad, ad)}: n={k['n']} | ort {_pct(k['ort'])} {ga(k['ga'])} | "
                      f"kazanan %{k['kazanan'] * 100:.0f}")
     y += aylik_bolum(butce_tablosu)
-    y += ['', 'Senaryolar: ' + ' | '.join(f"{k}: {v}" for k, v in SENARYO_ACIKLAMA.items()
+    aciklama = {**SENARYO_ACIKLAMA, **meta.get('ek_senaryolar', {})}
+    y += ['', 'Senaryolar: ' + ' | '.join(f"{k}: {v}" for k, v in aciklama.items()
                                           if any(r['senaryo'] == k for r in butce_tablosu))]
     return '\n'.join(y)
 
@@ -1160,6 +1207,11 @@ def calistir(ex, a, simdi_ms=None, log=print):
     ortak = dict(kayma_seviye=a.kayma_seviye, kayma_zaman=a.kayma_zaman, max_saat=a.max_saat)
     motor_v184 = CikisMotoru(RISK_V184, rsi_mum=100, **ortak)
     motorlar = {'ESKI_SIM': CikisMotoru(RISK_ESKI, rsi_mum=25, **ortak), 'V184': motor_v184}
+    try:
+        deneyler = cikis_deneyleri(getattr(a, 'cikis_deneyi', None))
+    except ValueError as e:
+        raise SystemExit(f"--cikis-deneyi {e}") from None
+    deney_motorlari = {ad: CikisMotoru(replace(RISK_V184, **d), rsi_mum=100, **ortak) for ad, d in deneyler.items()}
 
     log(f"BTC 15m verisi indiriliyor ve rejim hesaplanıyor ({_tarih(bas_ms)} → {_tarih(bit_ms)})...")
     btc = BtcBaglami(depo.getir_df('BTC/USDT', '15m', bas_ms - (bf.PENCERE_BTC + bf.ISINMA_MUM) * MUM_15M_MS,
@@ -1178,6 +1230,8 @@ def calistir(ex, a, simdi_ms=None, log=print):
             'ai': (f"{os.path.basename(a.ai_model)} (eşik {yuva.esik:.2f}"
                    + (f", yalnız {_tarih(ai_egitim_son)} sonrası girişler" if ai_egitim_son else '') + ')')
             if yuva else None, 'notlar': notlar}
+    if deneyler and 'backfill' not in a.kaynak:
+        notlar.append("--cikis-deneyi yalnız piyasa taramasında (--kaynak backfill) uygulanır; bu çalıştırmada yok.")
     senaryolar, dogrulama, filtreler, etki = {}, {}, {}, {}
     yazilacak = []
 
@@ -1229,8 +1283,17 @@ def calistir(ex, a, simdi_ms=None, log=print):
         try:
             btablo, yuva_b = backfill_kaynak(depo, ex, btc, bas_ms, bit_ms, a.evren, motor_v184, yuva, log=log,
                                              motor_eski=motorlar['ESKI_SIM'],
-                                             radar_mum=max(1, int(round(a.radar_saat * 4))))
-            senaryolar.update(backfill_senaryolari(btablo, yuva_b, ai_egitim_son))
+                                             radar_mum=max(1, int(round(a.radar_saat * 4))),
+                                             deney_motorlari=deney_motorlari)
+            senaryolar.update(backfill_senaryolari(btablo, yuva_b, ai_egitim_son, deneyler=deney_motorlari))
+            if deneyler:
+                taban = 'B_V184_AI' if yuva_b is not None else 'B_V184'
+                meta['ek_senaryolar'] = {
+                    'B_' + ad: f"{taban} sinyalleri, çıkış: " + ', '.join(
+                        f"{k}={v:g} (canlı {getattr(RISK_V184, k):g})" for k, v in d.items())
+                    for ad, d in deneyler.items()}
+                notlar.append(f"DENEY (çıkış): {', '.join('B_' + ad for ad in deneyler)} senaryoları {taban} ile AYNI "
+                              f"sinyallere girer, yalnız çıkış ayarları farklıdır.")
             yazilacak.append((btablo, a.cikti + '_backfill.csv'))
         except Exception as e:  # noqa: BLE001 - gerçek kaynak raporu yine yazılsın
             log(f"⚠️ Backfill çalışmadı: {type(e).__name__}: {e}")
@@ -1273,6 +1336,9 @@ def arguman_ayristirici():
     ap.add_argument('--max-saat', type=float, default=96.0, help='pozisyon bu süreden sonra son fiyattan kapatılır')
     ap.add_argument('--radar-saat', type=float, default=24.0,
                     help='backfill radarı: son N saatte en çok yükselen 10 parite (canlı bot 24; deney: 4 = erken yakalama)')
+    ap.add_argument('--cikis-deneyi', nargs='+', default=[], metavar='AD:alan=deger',
+                    help='backfill: canlı kurulumun sinyallerini başka çıkış ayarlarıyla da oynat; ör. STOP15:stop_min=0.015 '
+                         'ZAMAN2:max_bekleme_saati=2 (alanlar: sniper/risk_motoru.py RiskAyarlari). Senaryo adı B_<AD>')
     ap.add_argument('--kayma-seviye', type=float, default=0.0015)
     ap.add_argument('--kayma-zaman', type=float, default=0.0005)
     ap.add_argument('--onbellek', default=os.path.join(KOK, 'sim_onbellek'))
