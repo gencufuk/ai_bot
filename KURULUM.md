@@ -192,6 +192,11 @@ screen -dmS deney bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_
 ```bash
 screen -dmS cikis bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --bitis 2026-09-30 --kaynak backfill --mod sabit --cikis-deneyi STOP20:stop_min=0.02 STOP15:stop_min=0.015 ZAMAN2:max_bekleme_saati=2 KISMI2:ilk_esik_min=0.02,ilk_esik_max=0.04 KILIT15:kar_kilidi_tetik=0.015 ERKEN:ilk_esik_min=0.02,ilk_esik_max=0.04,kar_kilidi_tetik=0.015,max_bekleme_saati=2 --cikti /root/v184_sim_9ay_cikis > sim_cikis.log 2>&1"
 ```
+- Bağımsız dönemde doğrulama (Nisan–Aralık 2025; yeni veri indirildiği için ~1 saat, ~1 GB ek önbellek). 30 Eylül'deki
+  çıkış deneyinde öne çıkan 2 saatlik zaman aşımı ve komşuları (ANALIZ §11.4):
+```bash
+screen -dmS dogrula bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2025-04-01 --bitis 2026-01-01 --kaynak backfill --mod sabit --cikis-deneyi ZAMAN15:max_bekleme_saati=1.5 ZAMAN2:max_bekleme_saati=2 ZAMAN3:max_bekleme_saati=3 --cikti /root/v184_sim_2025_zaman > sim_2025.log 2>&1"
+```
 **Alım yöntemi araştırması** (literatürdeki kuralların günlük veride testi; ~5-10 dk, az bellek):
 ```bash
 cd /root && nice -n 10 venv/bin/python -u tools/strateji_arastirma.py > strateji.log 2>&1
