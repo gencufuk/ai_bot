@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor.
 
 ---
 
@@ -448,3 +448,26 @@ Rapor, log ve sinyal tablosu: `veri/sim_2026-09-26/v184_sim_b_*`.
   - Canlı giriş filtreleri, Ağustos çıkışıyla: ≈ +12.7.
   - En iyisi dokuz denemenin en iyisi olduğu için iyimser; tek bir 52 günlük dönemde bu farklar gürültü aralığında.
 - **Karar (26 Eylül):** canlı kurulum değiştirilmedi. Aynı analiz 2–3 hafta sonra yeni dönemi de kapsayarak tekrarlanacak. Karma ayar (yatay filtre kaldırılır, Ağustos çıkış ayarları kullanılır, ATR ≤ %3 ve AI korunur) yeni dönemde de önde kalırsa uygulanacak.
+
+### 10.6 Altı aylık etiketli sinyaller: zarar alımdan mı satıştan mı? (30 Eylül)
+Veri: kullanıcının sunucusundaki `etiketli_sinyaller.csv`. Toplam 2.923 sinyal: 2.295 piyasa taraması (31 Mart – 25 Eylül, canlı radarın "hacim > 12M, 24 saatte en çok yükselen 10" seçimi), 543 gerçek işlem, 85 reddedilen sinyal. Etiket V18.4'ün bariyerleriyle hesaplanıyor: stop %2.5–5.5, hedef %3–6, %2.5'te +%1 kilidi, 4 saat; komisyon dahil. "Canlı ayar" filtresi: TREND, ATR ≤ %3, eski core modelin skoru ≥ 0.65. Skorlar aynı model dosyasıyla (md5 `9f70006a…`) yeniden hesaplandı.
+
+- **Aylık sonuç** (canlı ayar, n=652, işlem başı %):
+
+  | | Nis | May | Haz | Tem | Ağu | Eyl | Toplam |
+  |---|---|---|---|---|---|---|---|
+  | Etiket (tarama) | −0.17 | −0.17 | +0.02 | −0.25 | +0.17 | −0.07 | −0.08 |
+  | Gerçek işlemler (botun kendi çıkışı) | – | – | −0.21* | −0.25* | +0.75 | +0.15 | |
+
+  \* 4 Ağustos'a kadarki işlem kayıtları komisyonsuz (brüt) yazılmış; netleri ≈ −0.4. Kayıtlı toplam kâr (+21.1 USDT) Ağustos'tan geliyor (+29.5); diğer aylar toplamda −8.4.
+- **Satış sebep değil:**
+  - Stopla kapanan sinyallerde stoptan önce görülen en yüksek net kârın medyanı %+0.38. %+1.5'e çıkabilen %13, %+2'ye çıkabilen %2. Stopların %35'i ilk 30, %54'ü ilk 60 dakikada.
+  - Tüm sinyallerin %44'ü alımdan sonra %+1'i hiç görmüyor.
+  - Hedefe ulaşanların %39'u önce %−1'in, %20'si %−1.5'in altına iniyor. Stopu sıkılaştırmak kazananları da keser.
+  - Gerçek çıkışlar (trailing, moon bag) aynı girişlerde sabit hedefli etiketten ay bazında 0.1–0.6 puan daha iyi.
+- **Giriş özellikleri** (15 özellik; çeyrek eşikleri Nisan–Temmuz'dan alındı, Ağustos–Eylül'de sınandı):
+  - Son 3–6 saatte çok yükselen, EMA'dan uzaklaşmış ve ATR'si yüksek sinyallerde stop oranı iki dönemde de artıyor: en düşük çeyrekte %1–10, en yüksek çeyrekte %40–47. Ancak hedefe ulaşma da artıyor; ortalama getiri çeyrekler arasında düz.
+  - Hacim oranı ≥ 2.84 taramada iki dönemde de daha iyi (Ağu–Eyl farkı +1.02 puan, gün bazlı %95 GA +0.16 … +1.90). Gerçek işlemlerde tekrarlanmıyor (GA −0.65 … +0.54). Canlı ölçüm taramadakiyle aynı değil: gerçek işlemlerde medyan 2.66.
+  - Botun kendi son 10/20/30 sinyalinin sonucuna göre işlem açıp açmamak (rejim anahtarı) sonucu iyileştirmiyor.
+- **Sonuç:** Kayıp tek bir parametreden ya da çıkış mantığından gelmiyor. "Günün en çok yükselen 10 coinini kırılımda almak" girişinin 6 ayda kalıcı bir üstünlüğü görünmüyor; kazanç güçlü yükseliş dönemlerine (Ağustos) bağlı. Mevcut feature'larla iyi ve kötü sinyal ayrılamıyor; bu, trainer'ın AUC ≈ 0.5 bulgusuyla tutarlı.
+- **Seçenekler:** (1) olduğu gibi devam; (2) işlem tutarını düşürüp veri toplamaya devam (yarım satışlar 5.1 USDT alt sınırına takılmasın diye en az ~12 USDT); (3) farklı giriş fikirlerini (ör. kırılım anında değil geri çekilmede almak) sunucudaki fiyat verisiyle, dönem ayrımlı test etmek.
