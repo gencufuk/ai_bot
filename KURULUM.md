@@ -74,6 +74,14 @@ Ayrıca `core_xgboost_model.json` (AI modeli) ve loglar bulunur. Eski ayrı dosy
    45 2 * * * cd /root && /root/venv/bin/python shadow_labeler.py >> /root/shadow_labeler.log 2>&1
    0 3 * * *  cd /root && /root/venv/bin/python ai_trainer.py >> /root/ai_trainer.log 2>&1
    ```
+   **Sunucu yeniden başlarsa bot kendiliğinden açılmaz.** Açılışta başlaması için bir kez çalıştırın. Komut
+   `ai_bot.py` geçen eski satırları (yorum satırları dahil) silip yerine yenisini yazar; iki kez çalıştırmak
+   satırı çoğaltmaz, diğer satırlara dokunmaz:
+   ```bash
+   (crontab -l 2>/dev/null | grep -v 'ai_bot.py'; echo '@reboot sleep 60 && cd /root && screen -dmS btc_bot bash -c "source venv/bin/activate && python3 -u ai_bot.py"') | crontab -
+   ```
+   Redis de açılışta başlamalı: `systemctl enable --now redis-server`. Beklemediğiniz bir anda Telegram'a
+   "CORE V18.4 başladı" gelirse sunucu yeniden başlamış demektir.
 9. **Veri hattını bir kez çalıştırın** (bot çalışırken de olur). Uzun işleri `screen` içinde çalıştırın;
    `-u` log dosyasının canlı dolmasını sağlar:
    ```bash
@@ -132,7 +140,7 @@ Kod ve eğitim verisi paylaşılır; hesap bilgileri ve işlem kayıtları payla
      cd /root && venv/bin/python tools/veri_birlestir.py --ekle /root/gelen_etiketli.csv --uygula
      ```
    İşlem kaydı (`core_islem_verileri_v2.csv`) ve `.env` kopyalanmaz.
-5. **Cron:** aynı saatlerle kurulur.
+5. **Cron:** aynı satırlarla kurulur (açılışta başlatma satırı dahil).
 
 **Eğitim verisini ortak tutmak.** Her makine kendi işlemlerini kendi eğitim dosyasına ekler. Arada bir (ör.
 haftada bir) iki taraf `etiketli_sinyaller.csv` dosyasını karşıya `gelen_etiketli.csv` adıyla gönderir. Karşı taraf
