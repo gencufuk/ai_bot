@@ -706,3 +706,19 @@ Karar kuralı önceden belli: bir varyant yalnız 9 ayın tamamında ve iki yar�
 - **ATR sınırını %4'e çıkarmak iki dönemde de hafif artıda.** Eklenen ATR %3–4 sinyalleri 2026'da n=77, %+0.58; 2025'te n=81, %+0.35; ikisinde de %62–63'ü kazanıyor. GA iki dönemde de sıfırı içeriyor. İkinci aday; uygulanmadı.
 
 **Öneri:** `ai_bot.py` içinde `MAX_BEKLEME_SAATI` 4 → 2. Kullanıcı onayı bekleniyor. Etiket penceresi (`shadow_labeler`, `sniper/etiketleme.py`) eğitim verisinin tutarlılığı için 4 saat kalır.
+
+### 11.6 BTC trend takibinden aylık getiri beklentisi (30 Eylül, yerel hesap)
+Soru: büyük coinlerde trend takibi 90 USDT ile ayda 5–10 USDT getirir mi? Veri: `veri/arastirma_2026-09-30/strateji_gunluk.csv` (sunucuda indirilen günlük seriler). BTC fiyatı `BTC_TUT` getirisinden kuruldu. Kural: dünkü kapanış N günlük ortalamanın üstündeyse BTC, altındaysa USDT; geçiş başına %0.15 maliyet. Aylık kâr 90 USDT sabit sermaye üzerinden. Dönem Ağustos 2023 – Eylül 2026 (38 ay; MA200 ısınmasından sonra, bütün kurallar için aynı).
+
+| Kural | Ort. $/ay | Medyan $/ay | ≥5 $ olan ay | Zararlı ay | En kötü / en iyi ay | maxDD | 2025–26 ort. $/ay |
+|---|---|---|---|---|---|---|---|
+| BTC, MA50 | +3.34 | 0.00 | %32 | %42 | −10.9 / +35.4 | %−27 | +1.00 |
+| BTC, MA100 ±%2 bant | +3.40 | 0.00 | %34 | %34 | −13.4 / +39.2 | %−28 | +0.82 |
+| BTC, MA200 | +2.68 | 0.00 | %34 | %32 | −15.9 / +39.2 | %−32 | +0.23 |
+| En büyük 10 coin, MA20 (TREND_SEPET) | +3.67 | +4.51 | %50 | %42 | −34.4 / +81.6 | %−71 | +2.70 |
+| BTC al-tut | +3.37 | +3.10 | %45 | %39 | −18.4 / +39.2 | %−53 | +0.13 |
+
+- **Hiçbiri 90 USDT ile düzenli 5–10 USDT/ay üretmiyor.** Ortalamayı birkaç büyük ay taşıyor; BTC trend kurallarında medyan ay sıfır, çünkü zamanın ~%40'ı nakitte geçiyor. 2025–26 ortalaması ayda 0.2–1 USDT.
+- **En dengeli kural: MA100 ±%2 bant.** Yılda ~5 geçiş yapıyor, günlerin %58'inde pozisyonda. 2026'nın 9 ayında +10.7 USDT (tarama botu aynı dönemde simülasyonda −30…−36). Haziran çöküşünü −2.9 USDT ile geçti. 29 Eylül'de BTC, 100 günlük ortalamanın %19 üstünde (kural "BTC'de").
+- **10 coinli sepetin ortalaması daha yüksek ama maxDD %−71.** 90 USDT için uygun değil.
+- **Sınırlar:** Veri tek bir döngü (2023–24 boğa, 2025–26 yatay). Kural birkaç varyant arasından seçildi. Kapanışlar günlük, maliyet %0.15 varsayımı.
