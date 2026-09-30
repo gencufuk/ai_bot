@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor.
 
 ---
 
@@ -473,6 +473,39 @@ Veri: kullanıcının sunucusundaki `etiketli_sinyaller.csv`. Toplam 2.923 sinya
 - **Sonuç:** Kayıp tek bir parametreden ya da çıkış mantığından gelmiyor. "Günün en çok yükselen 10 coinini kırılımda almak" girişinin 6 ayda kalıcı bir üstünlüğü görünmüyor; kazanç güçlü yükseliş dönemlerine (Ağustos) bağlı. Mevcut feature'larla iyi ve kötü sinyal ayrılamıyor; bu, trainer'ın AUC ≈ 0.5 bulgusuyla tutarlı.
 - **Seçenekler:** (1) olduğu gibi devam; (2) işlem tutarını düşürüp veri toplamaya devam (yarım satışlar 5.1 USDT alt sınırına takılmasın diye en az ~12 USDT); (3) farklı giriş fikirlerini (ör. kırılım anında değil geri çekilmede almak) sunucudaki fiyat verisiyle, dönem ayrımlı test etmek.
 
+### 10.7 Dokuz aylık piyasa taraması (30 Eylül: 1 Ocak – 30 Eylül 2026)
+Rapor: `veri/arastirma_2026-09-30/v184_sim_9ay_rapor.txt`. İçerik:
+- 250 coin, yalnız Binance fiyat verisi (işlem kayıtları kullanılmadı).
+- Sabit kasa: işlem başına 20 USDT, balina 40.
+- Stop kayması %0.15 varsayıldı; canlıda son günlerde ~%0.4 görüldü, yani gerçek sonuç daha kötü olurdu.
+
+**Canlı kurulum (`B_V184_AI`), ay ay** (kâr USDT, 450 USDT bütçe):
+
+| Oca | Şub | Mar | Nis | May | Haz | Tem | Ağu | Eyl | Toplam |
+|---|---|---|---|---|---|---|---|---|---|
+| −7.43 | −1.24 | −11.13 | −8.05 | −8.90 | −2.41 | −2.42 | +15.38 | −4.03 | **−30.23** |
+
+- 450 USDT ile 685 işlem sonunda 419.77 USDT (%−6.7, en büyük düşüş %−10.0).
+- 100 USDT ile 616 işlem sonunda 68.05 USDT (%−31.9, en büyük düşüş %−44.2).
+- Dokuz ayın yalnız biri (Ağustos) artıda; kazanma oranı %43.
+
+**Diğer senaryolar da zararda** (450 USDT):
+
+| Senaryo | Sonuç (USDT) |
+|---|---|
+| AI'sız V18.4 | −99.70 |
+| Yatay filtresiz | −145.20 |
+| ATR %4 | −28.21 |
+| AI + yatay filtresiz | −49.07 |
+| Ağustos botu | −33.90 |
+
+**Sinyal başına:**
+- Canlı kurulum %−0.10 (GA %−0.39 … +0.20).
+- AI'sız V18.4 %−0.25 (GA %−0.47 … −0.02), yani anlamlı biçimde eksi.
+- AI vetosu zararı azaltıyor (fark +0.15 puan) ama kazandırmıyor.
+
+§10.4–10.5'teki 52 günlük sonuçların artıda çıkması, o dönemin içinde Ağustos'un bulunmasındandı.
+
 ## 11. Alım yöntemi araştırması: literatür ve test planı (30 Eylül)
 Soru: "son 24 saatte en çok yükseleni kırılımda al" girişi 6 ayda kalıcı bir üstünlük göstermedi (§10.6). Literatür bu konuda ne diyor, hangi alternatifler denenmeli?
 
@@ -502,3 +535,38 @@ Soru: "son 24 saatte en çok yükseleni kırılımda al" girişi 6 ayda kalıcı
 - **Sınır:** evren bugünün paritelerinden oluşuyor, delist olan coinler yok. Düşenleri alan kuralların sonucu bu yüzden iyimser.
 - **Doğrulama:** sentetik veride kuralların gelecek bilgisi kullanmadığı, portföy muhasebesi (kayma, devir, ücret) ve içine bilinen bir etki gömülmüş veride o etkinin bulunduğu test edildi (`tests/test_strateji_arastirma.py`).
 - Sonuçlar sunucu çalıştırmasından sonra §11.1'e yazılacak.
+
+### 11.1 Sonuçlar (30 Eylül, sunucu çalıştırması)
+Rapor ve günlük getiriler: `veri/arastirma_2026-09-30/strateji_rapor.txt`, `strateji_gunluk.csv`. Kapsam: 145 parite (3 sabit coin çıkarıldı), 2 Ocak 2023 – 29 Eylül 2026, işlem başına %0.15 komisyon + kayma.
+
+| Kural | 2023–24 toplam (maxDD) | 2025–26 toplam (maxDD) | 2025–26 Sharpe |
+|---|---|---|---|
+| BOT_VEKILI | %−36 (−74) | %−89 (−95) | −1.05 |
+| DONUS | %−50 (−85) | %−96 (−97) | −1.80 |
+| DONUS_TREND | %−49 (−79) | %−83 (−87) | −1.45 |
+| BUYUK_MOMENTUM | %+41 (−81) | %−76 (−87) | −0.63 |
+| HAFTALIK_MOM | %+226 (−66) | %−69 (−81) | −0.51 |
+| TREND_SEPET | %+45 (−71) | %+7 (−66) | +0.44 |
+| TREND_DIP | %+10 (−82) | %−94 (−96) | −1.43 |
+| BTC_TUT | %+463 (−26) | %−11 (−53) | +0.07 |
+| SEPET_TUT | %+343 (−44) | %−42 (−72) | −0.09 |
+
+**Yorum:**
+- **2023–24 yükseliş piyasası.** BTC'yi alıp tutmak (%+463) ve büyük coin sepeti (%+343) tüm aktif kuralları geride bıraktı. Haftalık momentum kuruluş döneminde %+226 yaptı, sınamada %−69'a döndü. Momentum kârları döneme bağlı; literatürdeki tartışmayla uyumlu.
+- **Günlük dönüş sınamada tutmadı.** `DONUS` (dünün en çok düşenleri) likit Binance coinlerinde komisyon sonrası iki dönemde de zararda, sınamada GA −72 … −10 baz puan/gün. Evrende batan coinler yok ve bu, sonucu `DONUS` lehine çarpıtır; buna rağmen zararda.
+- **Botun yaklaşımının günlük vekili** (`BOT_VEKILI`) sınamada günde −25 baz puan kaybettiriyor. Bu, §10.6–10.7'deki sonuçla ve canlı işlemlerle tutarlı.
+- **2025–26'da artıda kalan tek aktif kural `TREND_SEPET`** (%+7). Ama güvenilir değil:
+  - Düşüşü %−66.
+  - Getirisi birkaç aya toplanmış (Eki 2025 +%46, Ağu–Eyl 2026 +%31/+%52).
+  - Parametre varyantlarında sınama Sharpe'ı −0.39 … −0.03.
+- **Keşif amaçlı ek kontrol** (önceden seçilmemişti; Detzel vd. 2021'in BTC'deki fiyat/ortalama bulgusu): BTC'yi yalnız N günlük ortalamasının üstündeyken tutmak, altındayken nakitte kalmak (geçişte %0.15 ücret). BTC al-tut karşılaştırması: 2023–24 %+463 (düşüş %−26), 2025–26 %−11 (düşüş %−53).
+
+  | Ortalama | 2023–24 | 2025–26 | 2025–26 düşüş | Geçiş/yıl |
+  |---|---|---|---|---|
+  | MA20 | %+71 | %+0 | %−29 | 43 |
+  | MA50 | %+184 | %+21 | %−26 | 21 |
+  | MA100 | %+80 | %+15 | %−25 | 14 |
+  | MA200 | %+134 | %−1 | %−32 | 9 |
+
+  Hiçbir varyant iki dönemde de zarar etmiyor ve 2025–26'daki düşüş al-tutun yarısına iniyor. Getiri ise mütevazı: 90 USDT için 2025–26'da MA50'de ayda ~1 USDT. MA seçimi sonuca belirgin etki ediyor; sınama dönemi 21 ay.
+- **Sonuç:** Test edilen kısa vadeli alım kurallarının hiçbiri, kurulduktan sonraki dönemde (2025–26) komisyon sonrası güvenilir biçimde kazandırmadı. Kanıtı olan tek yaklaşım yavaş bir trend filtresi. O da piyasada kalma kararını iyileştiriyor (düşüşü yarıya indiriyor), günlük kazanç üretmiyor.

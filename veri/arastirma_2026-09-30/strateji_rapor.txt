@@ -1,0 +1,59 @@
+ALIM YÖNTEMİ ARAŞTIRMASI | 2023-01-01 → 2026-09-30 | kuruluş/sınama ayrımı 2025-01-01
+Evren: bugünün en hacimli 150 USDT paritesi + BTC; kullanılan 145 parite (sabit coin çıkarılan: 3) | likit: 30g medyan hacim >= 5M USDT | komisyon+kayma: işlem başına %0.15 | API isteği: 231
+Getiriler komisyon dahil, günlük; 'sınama' dönemi kurallar seçildikten sonraki veridir. 90 USDT sütunu: o bütçeyle günlük ortalama kâr/zarar.
+
+1) KURALLAR — kuruluş ve sınama dönemi
+   kural           dönem      yıllık sharpe   maxDD günlük ort     %95 GA (bps) poz.gün devir 90USDT/gün
+   BOT_VEKILI      kurulus    -20.0%  +0.11  -73.9%     +2.3bp   [-28.5, +38.0]     48%  1.38   +0.021
+   BOT_VEKILI      sinama     -72.4%  -1.05  -94.9%    -25.0bp   [-58.8, +10.0]     47%  1.42   -0.225
+   DONUS           kurulus    -29.1%  -0.03  -85.2%     -0.7bp   [-30.6, +30.8]     48%  1.52   -0.006
+   DONUS           sinama     -84.0%  -1.80  -97.2%    -40.6bp    [-72.4, -9.6]     45%  1.53   -0.365
+   DONUS_TREND     kurulus    -28.7%  -0.29  -79.1%     -4.6bp   [-29.7, +24.5]     28%  0.94   -0.041
+   DONUS_TREND     sinama     -63.6%  -1.45  -86.6%    -22.9bp    [-46.0, +0.4]     22%  0.76   -0.206
+   BUYUK_MOMENTUM  kurulus    +18.7%  +0.60  -80.6%    +12.8bp   [-19.2, +45.4]     48%  1.37   +0.115
+   BUYUK_MOMENTUM  sinama     -55.8%  -0.63  -87.3%    -13.7bp   [-45.5, +16.9]     47%  1.36   -0.123
+   HAFTALIK_MOM    kurulus    +80.5%  +1.13  -66.3%    +25.2bp    [-6.9, +61.2]     50%  0.21   +0.227
+   HAFTALIK_MOM    sinama     -48.5%  -0.51  -81.0%    -10.4bp   [-38.4, +17.5]     51%  0.22   -0.094
+   TREND_SEPET     kurulus    +20.6%  +0.61  -70.5%    +11.3bp   [-16.9, +42.3]     43%  0.44   +0.102
+   TREND_SEPET     sinama      +4.2%  +0.44  -65.5%     +9.4bp   [-24.5, +43.0]     44%  0.43   +0.085
+   TREND_DIP       kurulus     +4.8%  +0.50  -81.7%    +12.8bp   [-20.6, +49.4]     47%  1.37   +0.115
+   TREND_DIP       sinama     -79.1%  -1.43  -95.9%    -33.0bp    [-66.0, -3.0]     45%  1.27   -0.297
+   BTC_TUT         kurulus   +137.3%  +2.01  -26.2%    +26.9bp    [+9.4, +46.5]     51%  0.00   +0.242
+   BTC_TUT         sinama      -6.2%  +0.07  -53.0%     +0.8bp   [-16.0, +17.6]     50%  0.00   +0.008
+   SEPET_TUT       kurulus   +110.4%  +1.47  -44.1%    +26.1bp    [-1.0, +53.7]     53%  0.03   +0.235
+   SEPET_TUT       sinama     -26.9%  -0.09  -72.1%     -1.8bp   [-30.1, +25.7]     51%  0.02   -0.016
+
+2) YIL YIL YILLIK GETİRİ (%, komisyon dahil; yarım yıllar yıllığa çevrilmiştir)
+   kural               2023     2024     2025     2026
+   BOT_VEKILI         -6.2%   -31.8%   -85.8%   -33.1%
+   DONUS              +4.6%   -51.8%   -89.5%   -71.7%
+   DONUS_TREND        +5.3%   -51.7%   -74.7%   -40.7%
+   BUYUK_MOMENTUM    -21.8%   +79.6%   -63.5%   -42.9%
+   HAFTALIK_MOM      +91.1%   +70.5%   -53.9%   -40.2%
+   TREND_SEPET       +52.6%    -4.6%    +2.7%    +6.1%
+   TREND_DIP          +9.3%    +0.6%   -86.8%   -61.1%
+   BTC_TUT          +155.1%  +120.8%    -6.3%    -6.1%
+   SEPET_TUT        +125.5%   +96.3%   -42.0%    -0.3%
+
+3) SAĞLAMLIK: parametre varyantları (yalnız bilgi; seçim yapılmaz) — Sharpe kuruluş / sınama
+   BOT_VEKILI      k=5: -0.29 / -0.72 | k=20: +0.58 / -1.05
+   DONUS           k=5: -0.25 / -1.96 | k=20: +0.54 / -1.55
+   BUYUK_MOMENTUM  k=1: +0.09 / -0.27 | k=5,buyuk=20: -0.13 / -1.13
+   HAFTALIK_MOM    gun=14: +1.28 / -0.25 | gun=28: +1.30 / -0.57 | k=5: +0.89 / -0.77
+   TREND_SEPET     ma=50: +0.36 / -0.03 | buyuk=20: +0.56 / -0.39
+   TREND_DIP       ma=50: -0.12 / -1.60 | k=10: +0.80 / -1.01
+
+4) KOMİSYON DUYARLILIĞI — sınama dönemi Sharpe (işlem başına ücret)
+   kural             %0.075   %0.150   %0.250
+   BOT_VEKILI         -0.60    -1.05    -1.65
+   DONUS              -1.29    -1.80    -2.47
+   DONUS_TREND        -1.09    -1.45    -1.92
+   BUYUK_MOMENTUM     -0.16    -0.63    -1.24
+   HAFTALIK_MOM       -0.43    -0.51    -0.62
+   TREND_SEPET        +0.59    +0.44    +0.24
+   TREND_DIP          -1.02    -1.43    -1.98
+   BTC_TUT            +0.07    +0.07    +0.07
+   SEPET_TUT          -0.09    -0.09    -0.10
+
+Kurallar: BOT_VEKILI: son 24 saatte en çok yükselen 10 (botun radarının günlük vekili) | DONUS: son 24 saatte en çok düşen 10 (kısa vadeli dönüş) | DONUS_TREND: DONUS, yalnız BTC 20 günlük ortalamanın üstündeyken | BUYUK_MOMENTUM: en büyük 10 coinden son 24 saatte en çok yükselen 3 | HAFTALIK_MOM: 7 günde bir, son 7 günde en çok yükselen 10 | TREND_SEPET: en büyük 10 coinden 20 günlük ortalamasının üstündekiler | TREND_DIP: ortalamasının üstündekilerden son 24 saatte en çok düşen 5 | BTC_TUT: BTC al-tut | SEPET_TUT: en büyük 10 coin, haftalık dengelenen sepet
+NOT: evren bugünün paritelerinden oluşur (delist olan yok); düşenleri alan kuralların sonucu iyimserdir.
