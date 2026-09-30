@@ -84,7 +84,45 @@ def evren_sec(ex, n):
 
 
 def btc_baglami(btc: pd.DataFrame) -> pd.DataFrame:
-    """Her kapanmış BTC 15m mumu için canlı radar_loop'un ürettiği bağlam (kapalı mum modu)."""
+    """Her kapanmış BTC 15m mumu için canlı radar_loop'un ürettiği bağlam (kapalı mum modu).
+
+    Canlı bot her turda SON 300 mumla hesaplar; EMA200 bu pencerenin ilk 200 mumunun ortalamasıyla başlar ve
+    son 100 mumda özyinelemeyle ilerler (pandas_ta presma). Burada aynı pencere-başı EMA kapalı formla vektörel
+    hesaplanır; ADX tüm seri üzerinden (Wilder yumuşatmasında 300 mum sonra pencere başının etkisi ~1e-9).
+    Mum başına pencere hesaplayan eski döngü (btc_baglami_pencereli) 9 aylık dönemde yavaş sunucuda ~1 saat
+    sürüyordu; eşdeğerlik tests/test_labeler_backfill.py'de doğrulanır."""
+    n = len(btc)
+    c, h = btc['c'].to_numpy(dtype=float), btc['h'].to_numpy(dtype=float)
+    a = 2.0 / 201.0
+    ilk200 = pd.Series(c).rolling(200).mean().shift(100).to_numpy()   # pencerenin ilk 200 mumunun ortalaması
+    son100 = np.convolve(c, a * (1 - a) ** np.arange(100))[:n]        # son 100 mumun EMA katkısı
+    ema_d = (1 - a) ** 100 * ilk200 + son100
+    try:
+        adx_d = ta.adx(btc['h'], btc['l'], btc['c'], length=14)['ADX_14'].to_numpy(dtype=float)
+    except Exception:
+        adx_d = np.zeros(n)
+    kayitlar, btc_ok = [], False
+    for i in range(PENCERE_BTC - 1, n):
+        ema = float(ema_d[i])
+        adx = float(adx_d[i]) if np.isfinite(adx_d[i]) else 0.0
+        tepe = h[i - 2:i + 1].max()
+        if (tepe - c[i]) / tepe > 0.015:
+            btc_ok = False
+        elif c[i] > ema * (1 + BTC_HISTEREZIS):
+            btc_ok = True
+        elif c[i] < ema * (1 - BTC_HISTEREZIS):
+            btc_ok = False
+        kayitlar.append({'kapanis': int(btc['ts'].iloc[i]) + MUM_15M_MS,
+                         'btc_1h_degisim': float((c[i] / c[i - 4] - 1) * 100),
+                         'btc_ema_uzaklik': float((c[i] / ema - 1) * 100) if ema > 0 else 0.0,
+                         'btc_adx': adx, 'btc_ok': bool(btc_ok),
+                         'rejim': 'TREND' if adx >= ADX_TREND_ESIK else 'YATAY'})
+    return pd.DataFrame(kayitlar).set_index('kapanis') if kayitlar else pd.DataFrame(
+        columns=['btc_1h_degisim', 'btc_ema_uzaklik', 'btc_adx', 'btc_ok', 'rejim'])
+
+
+def btc_baglami_pencereli(btc: pd.DataFrame) -> pd.DataFrame:
+    """Referans: canlı botun hesabını mum başına 300'lük pencereyle birebir tekrarlar (yavaş; yalnız testlerde)."""
     kayitlar, btc_ok = [], False
     c, h = btc['c'].to_numpy(), btc['h'].to_numpy()
     for i in range(len(btc)):
@@ -123,12 +161,14 @@ def on_filtre(df: pd.DataFrame, ayar: SinyalAyarlari) -> pd.Series:
             & (atr / df['c'] <= ayar.max_atr_pct * 1.05) & (msb | eng)).fillna(False)
 
 
-def radar_paneli(seriler: dict) -> tuple:
-    """Her kapanış anında: canlı radarın 'hacim>12M, 24s değişime göre ilk 10' seçimi + piyasa genişliği."""
+def radar_paneli(seriler: dict, pencere: int = 96) -> tuple:
+    """Her kapanış anında: canlı radarın 'hacim>12M, 24s değişime göre ilk 10' seçimi + piyasa genişliği.
+    pencere: sıralamada kullanılan değişimin 15m mum sayısı (96 = 24 saat, canlı bot). Hacim eşiği her zaman
+    son 24 saatin hacmidir (canlı botun ticker'daki quoteVolume'u)."""
     deg, hac = {}, {}
     for s, df in seriler.items():
         idx = df['ts'] + MUM_15M_MS
-        deg[s] = pd.Series((df['c'] / df['c'].shift(96) - 1).to_numpy(), index=idx)
+        deg[s] = pd.Series((df['c'] / df['c'].shift(pencere) - 1).to_numpy(), index=idx)
         hac[s] = pd.Series((df['v'] * df['c']).rolling(96).sum().to_numpy(), index=idx)
     deg, hac = pd.DataFrame(deg), pd.DataFrame(hac)
     uygun = hac > MIN_HACIM_USDT

@@ -562,7 +562,7 @@ def oynat(islemler: List[dict], butce: float, mod: str = 'sabit', oran: float = 
                     stop_sayac[s] += 1
                     if stop_sayac[s] >= 2:
                         kara[s], stop_sayac[s] = t + KARA_LISTE_MS, 0
-                elif 'TREND' in mesaj:
+                else:                  # ai_bot._tam_cikis: stop dışı her çıkış "peş peşe" sayacını sıfırlar
                     stop_sayac[s] = 0
                 alinan.append({'sembol': s, 'giris_ms': int(x['giris_ms']), 'cikis_ms': t, 'boyut': boyut,
                                'kar': kar, 'getiri': kar / boyut})
@@ -768,7 +768,7 @@ def gercek_senaryolari(tablo: pd.DataFrame, yuva, ai_bas_ms=None) -> Dict[str, L
 # Kaynak 2: backfill sinyalleri
 # ------------------------------------------------------------------------------------------
 def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: CikisMotoru, yuva,
-                    semboller=None, log=print, motor_eski: Optional[CikisMotoru] = None):
+                    semboller=None, log=print, motor_eski: Optional[CikisMotoru] = None, radar_mum: int = 96):
     """Sinyaller Ağustos kapsamında üretilir (ATR <= %4, BTC durumundan bağımsız); senaryo filtreleri
     backfill_senaryolari'nda uygulanır. V18.4 çıkışı V18.4 BTC onayı olan sinyallere, V18.0.2 çıkışı
     (motor_eski) Ağustos botunun gireceği sinyallere (eski BTC kuralı + eski AI) simüle edilir."""
@@ -786,7 +786,7 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
     seriler15 = {s: d for s, d in seriler15.items() if len(d) > bf.PENCERE_15M}
     # bit_ms sonrası satırlar (--bitis geçmişteyse çıkış simülasyonu için) önceki anların sırasını değiştirmez:
     # değişim/hacim geriye dönük, sıralama satır içi. Sinyaller zaten yalnız bit_ms'e kadar üretilir.
-    ilk_n, genislik = bf.radar_paneli(seriler15)
+    ilk_n, genislik = bf.radar_paneli(seriler15, pencere=radar_mum)
     ayar = SinyalAyarlari(max_atr_pct=max(MAX_ATR_V184, MAX_ATR_V1802) / 100)
     sinyaller = []
     for s, df15 in seriler15.items():
@@ -1223,10 +1223,13 @@ def calistir(ex, a, simdi_ms=None, log=print):
     if 'backfill' in a.kaynak:
         notlar.append(f"Piyasa taraması evreni bugünün en hacimli {a.evren} paritesi: dönem içinde delist olan coinler "
                       f"yok, sonuç biraz iyimser olabilir.")
+        if a.radar_saat != 24:
+            notlar.append(f"DENEY: radar son {a.radar_saat:g} saatte en çok yükselen 10 pariteyi tarar (canlı bot: 24 saat).")
         log(f"Backfill: evren seçiliyor (en hacimli {a.evren} USDT paritesi) ve sinyaller üretiliyor...")
         try:
             btablo, yuva_b = backfill_kaynak(depo, ex, btc, bas_ms, bit_ms, a.evren, motor_v184, yuva, log=log,
-                                             motor_eski=motorlar['ESKI_SIM'])
+                                             motor_eski=motorlar['ESKI_SIM'],
+                                             radar_mum=max(1, int(round(a.radar_saat * 4))))
             senaryolar.update(backfill_senaryolari(btablo, yuva_b, ai_egitim_son))
             yazilacak.append((btablo, a.cikti + '_backfill.csv'))
         except Exception as e:  # noqa: BLE001 - gerçek kaynak raporu yine yazılsın
@@ -1268,6 +1271,8 @@ def arguman_ayristirici():
     ap.add_argument('--ai-model', default=os.path.join(KOK, 'core_xgboost_model.json'), help="'yok': AI senaryosu yok")
     ap.add_argument('--evren', type=int, default=250, help='backfill: en hacimli N USDT paritesi')
     ap.add_argument('--max-saat', type=float, default=96.0, help='pozisyon bu süreden sonra son fiyattan kapatılır')
+    ap.add_argument('--radar-saat', type=float, default=24.0,
+                    help='backfill radarı: son N saatte en çok yükselen 10 parite (canlı bot 24; deney: 4 = erken yakalama)')
     ap.add_argument('--kayma-seviye', type=float, default=0.0015)
     ap.add_argument('--kayma-zaman', type=float, default=0.0005)
     ap.add_argument('--onbellek', default=os.path.join(KOK, 'sim_onbellek'))

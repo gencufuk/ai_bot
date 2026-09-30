@@ -180,6 +180,10 @@ screen -dmS sim9 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_s
 tail -3 /root/sim_9ay.log         # ilerleme
 cat /root/v184_sim_9ay_rapor.txt  # bitince
 ```
+Deney, "yükselişi erken yakala": radar son 4 saatte en çok yükselenleri tarar (canlı bot 24 saat). Önbellek varsa 20-40 dk sürer; sonuç 9 aylık raporla karşılaştırılır:
+```bash
+screen -dmS r4 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --kaynak backfill --mod sabit --radar-saat 4 --cikti /root/v184_sim_9ay_r4 > sim_r4.log 2>&1"
+```
 **Alım yöntemi araştırması** (literatürdeki kuralların günlük veride testi; ~5-10 dk, az bellek):
 ```bash
 cd /root && nice -n 10 venv/bin/python -u tools/strateji_arastirma.py > strateji.log 2>&1

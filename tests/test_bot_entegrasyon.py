@@ -33,6 +33,7 @@ class SahteBorsa:
         self.kotu_semboller = set()
         self.ohlcv = {}
         self.ticker_cagri = 0
+        self.bakiye_cagri = 0
 
     def amount_to_precision(self, sym, amt):
         v = math.floor(float(amt) * 1000 + 1e-9) / 1000
@@ -52,6 +53,7 @@ class SahteBorsa:
         return {'last': self.fiyatlar[s]}
 
     async def fetch_balance(self):
+        self.bakiye_cagri += 1
         b = {'free': dict(self.bakiye), 'used': {c: 0.0 for c in self.bakiye}, 'total': dict(self.bakiye)}
         b.update({c: {'free': v, 'used': 0.0, 'total': v} for c, v in self.bakiye.items()})
         return b
@@ -478,3 +480,58 @@ def test_canli_engelleme_orani_hedeften_saparsa_uyarir(ortam, monkeypatch):
     _, mesajlar = calistir(besle)
     ai_bot.AI_KARARLARI.clear()
     assert any('engelleme oranı %90' in m for m in mesajlar)
+
+
+def test_stop_satisi_bakiye_sorgusu_beklemeden_takip_adedini_satar(ortam):
+    """Stopta her saniye fiyat demek: takip edilen adet biliniyorsa satıştan önce bakiye sorulmaz."""
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'HZL/USDT': 0.95}                             # -%5: stop
+    borsa.bakiye['HZL'] = 20.0
+    pozisyon(db, 'HZL/USDT', 1.0, adet=20.0)
+    _, mesajlar = calistir(ai_bot.vip_turu)
+    assert len(borsa.emirler) == 1 and borsa.emirler[0]['amount'] == pytest.approx(20.0)
+    assert borsa.bakiye_cagri == 0
+    assert not db.hexists(f'{P}:islem_listesi', 'HZL/USDT') and any('STOP LOSS' in m for m in mesajlar)
+
+
+def test_hizli_satis_reddedilirse_bakiyedeki_miktar_satilir(ortam):
+    """Takip adedi bakiyeden fazlaysa (ör. komisyon coin'den kesildi) borsa reddeder: bakiye sorgulu yol."""
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'KSR/USDT': 0.95}
+    borsa.bakiye['KSR'] = 19.9
+    pozisyon(db, 'KSR/USDT', 1.0, adet=20.0)
+    _, mesajlar = calistir(ai_bot.vip_turu)
+    assert len(borsa.emirler) == 1 and borsa.emirler[0]['amount'] == pytest.approx(19.9)
+    assert borsa.bakiye_cagri == 1 and borsa.bakiye['KSR'] == pytest.approx(0.0)
+    assert any('STOP LOSS' in m for m in mesajlar)
+
+
+def test_hizli_satis_belirsizse_ayni_turda_ikinci_satis_denenmez(ortam):
+    borsa, db, _ = ortam
+    borsa.fiyatlar = {'BLR/USDT': 0.95}
+    borsa.bakiye['BLR'] = 20.0
+    pozisyon(db, 'BLR/USDT', 1.0, adet=20.0)
+    borsa.hata_kuyrugu = [ccxt.NetworkError('bağlantı koptu')]      # emir borsaya ulaşmadı, sorgu da bulamaz
+    calistir(ai_bot.vip_turu)
+    assert borsa.emirler == [] and borsa.bakiye_cagri == 0
+    assert db.hexists(f'{P}:islem_listesi', 'BLR/USDT')             # sonraki turda tekrar denenecek
+
+
+def test_stop_sayaci_stop_disi_cikista_sifirlanir(ortam):
+    """'Peş peşe 2 stop': arada kâr kilidiyle kapanan işlem sayacı sıfırlar (eskiden yalnız trend çıkışı)."""
+    borsa, db, _ = ortam
+    db.hset(f'{P}:stop_counts', 'SAY/USDT', '1')                    # önceki bir stop
+    borsa.fiyatlar = {'SAY/USDT': 1.008}                            # max %3 görmüş, +%0.6 net: kâr kilidi
+    borsa.bakiye['SAY'] = 20.0
+    pozisyon(db, 'SAY/USDT', 1.0, adet=20.0, max_kar=0.026, atr=2.0)
+    _, mesajlar = calistir(ai_bot.vip_turu)
+    assert any('KÂR KİLİDİ' in m for m in mesajlar)
+    assert not db.hexists(f'{P}:stop_counts', 'SAY/USDT') and not db.hexists(f'{P}:kara_liste', 'SAY/USDT')
+
+
+def test_fiyat_yaz_ucuz_coinde_de_anlamli_basamak():
+    assert ai_bot.fiyat_yaz(0.00070123) == '0.00070123'
+    assert ai_bot.fiyat_yaz(0.0000123) == '0.0000123'                # bilimsel gösterim yok
+    assert ai_bot.fiyat_yaz(5.387) == '5.387' and ai_bot.fiyat_yaz(15.001) == '15.001'
+    assert ai_bot.fiyat_yaz(84386.02) == '84386.02' and ai_bot.fiyat_yaz(100.0) == '100'
+    assert ai_bot.fiyat_yaz(None) == 'None' and ai_bot.fiyat_yaz(0) == '0.0'

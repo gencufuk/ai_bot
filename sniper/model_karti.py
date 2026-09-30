@@ -143,7 +143,9 @@ class ModelYuvasi:
             return f"⚠️ {ad} yüklenemedi, {'önceki model korunuyor' if self.model is not None else 'model devre dışı'}: {e}"
         self.model, self.kart, self.featurelar, self._imza = model, kart, featurelar, imza
         self.esik = float(kart['esik']) if kart and kart.get('esik') is not None else self.varsayilan_esik
-        self.surum = (kart or {}).get('surum') or f"legacy-{imza[0]}"
+        # Kartsız modelde sürüm dosya İÇERİĞİNDEN: aynı model iki sunucuda aynı adı taşır (eskiden değişiklik
+        # zamanıydı; kopyalanan dosya her makinede farklı 'legacy-<zaman>' gösteriyordu)
+        self.surum = (kart or {}).get('surum') or f"legacy-{dosya_hash(self.model_yolu)[:8]}"
         kaynak = 'kartlı' if kart else 'kartsız/legacy'
         return (f"🧠 {self.rol} modeli yüklendi ({kaynak}): {len(featurelar)} feature, "
                 f"eşik {self.esik:.3f} ({'<' if self.yon == 'min' else '>'} ise blok)")

@@ -273,6 +273,18 @@ def test_kismi_satisin_parasi_aninda_kasaya_doner():
     assert atlanan2 == {'bakiye': 1}
 
 
+def test_kara_liste_yalniz_pes_pese_stoplarda():
+    """Botla aynı kural: arada stop dışı (ör. kâr kilidi) çıkış varsa iki stop kara liste sayılmaz."""
+    islemler = [
+        _islem('A', 0, [(10, 1.0, -0.03)], '🛑 STOP LOSS (%-2.5)'),
+        _islem('A', 100, [(110, 1.0, 0.01)], '🔒 KÂR KİLİDİ (+%1)'),
+        _islem('A', 200, [(210, 1.0, -0.03)], '🛑 STOP LOSS (%-2.5)'),
+        _islem('A', 300, [(310, 1.0, 0.02)]),               # kara listede değil: alınır
+    ]
+    df, _, atlanan, _ = vs.oynat(islemler, 1000, 'sabit')
+    assert len(df) == 4 and not atlanan
+
+
 def test_oransal_mod_ozsermaye_payi():
     islemler = [_islem('A', 0, [(10, 1.0, 0.10)]), _islem('B', 20, [(30, 1.0, 0.0)], kasa='BALİNA')]
     df, egri, _, _ = vs.oynat(islemler, 100, 'oransal', 0.2)
@@ -747,3 +759,10 @@ def test_uctan_uca_backfill_eski_kartsiz_modelle(dunya, tmp_path):
     assert '(taban)' in metin and 'B_V1802' in metin
     assert 'AY AY SONUÇ (sabit kasa' in metin and 'B_V184_AI: backfill, V18.4 + AI (canlıdaki kurulum); 100 USDT ile' in metin
     assert any('delist' in n for n in sonuc['meta']['notlar'])
+    a4 = vs.arguman_ayristirici().parse_args([
+        '--baslangic', str(pd.Timestamp(T0_BF + 6 * 86_400_000, unit='ms')), '--kaynak', 'backfill',
+        '--onbellek', str(tmp_path / 'onb'), '--cikti', str(tmp_path / 'r4'), '--ai-model', str(model),
+        '--evren', '2', '--butce', '100', '--radar-saat', '4'])
+    s4 = vs.calistir(dunya, a4, simdi_ms=T0_BF + 14 * 86_400_000, log=lambda *x: None)
+    assert any('DENEY: radar son 4 saatte' in n for n in s4['meta']['notlar'])
+    assert (tmp_path / 'r4_rapor.txt').exists()

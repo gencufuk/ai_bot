@@ -10,6 +10,7 @@ import sys
 import datetime
 import os
 import traceback
+import math
 from collections import deque
 from dotenv import load_dotenv
 
@@ -186,6 +187,19 @@ def _f(x, varsayilan):
         return float(x) if x is not None and x != '' else varsayilan
     except (TypeError, ValueError):
         return varsayilan
+
+
+def fiyat_yaz(x) -> str:
+    """Telegram için fiyat: ~6 anlamlı basamak, bilimsel gösterim yok. ':.4f' ucuz coinlerde
+    '0.0007 ➔ 0.0007' yazıyordu; fark görünmüyordu."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if not x > 0 or x != x or x == float('inf'):
+        return f"{x}"
+    basamak = max(2, 5 - int(math.floor(math.log10(x))))
+    return f"{x:.{basamak}f}".rstrip('0').rstrip('.')
 
 
 def get_fill_price(order, fallback):
@@ -431,7 +445,7 @@ async def telegram_handler():
                                     kz = (((tick * (1 - FEE_RATE)) - (a * (1 + FEE_RATE))) / a) * 100
                                     m_k, yari_satildi = float(db.hget(f"{PREF}:max_karlar", s) or 0.0) * 100, db.hget(f"{PREF}:half_sold", s) == "1"
                                     w_icon = " 🐋" if i_mik > 30 else ""
-                                    msg += (f"{'🟢' if kz >= 0 else '🔴'} **{s}**{' (💎)' if yari_satildi else ''}{w_icon}\n🛒 `{a:.4f} ➔ {tick:.4f}`\n💸 Anlık: `{((tick - a) * (i_mik / a)):+.2f} USDT` (Net: %{kz:.2f})\n⏳ `{(time.time() - float(db.hget(f'{PREF}:giris_zamanlari', s) or time.time())) / 3600:.1f}s` | Max: `%{m_k:.2f}`\n➖➖➖➖\n")
+                                    msg += (f"{'🟢' if kz >= 0 else '🔴'} **{s}**{' (💎)' if yari_satildi else ''}{w_icon}\n🛒 `{fiyat_yaz(a)} ➔ {fiyat_yaz(tick)}`\n💸 Anlık: `{((tick - a) * (i_mik / a)):+.2f} USDT` (Net: %{kz:.2f})\n⏳ `{(time.time() - float(db.hget(f'{PREF}:giris_zamanlari', s) or time.time())) / 3600:.1f}s` | Max: `%{m_k:.2f}`\n➖➖➖➖\n")
                                 await telegram_mesaj_gonder(session, msg)
                             except Exception as e:
                                 await telegram_mesaj_gonder(session, f"⚠️ /durum verisi alınırken hata: {str(e)}")
@@ -604,13 +618,71 @@ async def _yarim_sat(sym, p, e, tick, i_mik, adet, ai, kasa_tipi, simdi):
     await save_trade_to_csv(_islem_satiri(sym, ai, kasa_tipi, p.giris, g_satis, g_oran, net_kd, e.mesaj,
                                           (simdi - p.giris_zamani) / 3600), ai, _islem_ek(sym, p))
     if e.tip == risk.MOON_BAG:
-        bildir(f"🚀 **MOON BAG (RSI ŞİŞTİ)**: {sym}\n🛒 `{p.giris:.4f} ➔ {g_satis:.4f}`\n💸 Cebe: `+{net_kd:.2f} USDT` (%{g_oran*100:.2f})\n*💎 Kalan %50 ile trend takip ediliyor!*")
+        bildir(f"🚀 **MOON BAG (RSI ŞİŞTİ)**: {sym}\n🛒 `{fiyat_yaz(p.giris)} ➔ {fiyat_yaz(g_satis)}`\n💸 Cebe: `+{net_kd:.2f} USDT` (%{g_oran*100:.2f})\n*💎 Kalan %50 ile trend takip ediliyor!*")
     else:
-        bildir(f"💰 **DİNAMİK KISMİ KÂR**: {sym}\n🛒 `{p.giris:.4f} ➔ {g_satis:.4f}`\n💸 Cebe: `+{net_kd:.2f} USDT` (%{g_oran*100:.2f})")
+        bildir(f"💰 **DİNAMİK KISMİ KÂR**: {sym}\n🛒 `{fiyat_yaz(p.giris)} ➔ {fiyat_yaz(g_satis)}`\n💸 Cebe: `+{net_kd:.2f} USDT` (%{g_oran*100:.2f})")
     return 'SATILDI'
 
 
+async def _hizli_tam_satis(sym, adet, tick):
+    """Takip edilen adet biliniyorsa bakiye sorgusu BEKLENMEDEN satar: stopta geçen her saniye fiyat demek
+    (canlıda stoplar seviyenin ortalama 0.4 puan altından doldu). Dönen: emir | None (adet yok/küçük ya da
+    bakiye yetersiz: bakiye sorgulu yola düşülür). Diğer hatalar yukarı fırlar ve eskisi gibi bir sonraki
+    turda tekrar denenir; belirsiz sonuçta aynı turda ikinci satış denenmez."""
+    if adet is None or adet * tick <= MIN_NOTIONAL_USDT:
+        return None
+    try:
+        miktar = float(exchange.amount_to_precision(sym, adet))
+    except ccxt.InvalidOrder:
+        return None
+    if miktar * tick <= MIN_NOTIONAL_USDT:
+        return None
+    try:
+        return await _guvenli_market_emri(sym, 'sell', miktar)
+    except ccxt.InsufficientFunds:
+        # ör. komisyon coin'den kesildiği için bakiye takip edilen adetten az: bakiye sorgulu yol halleder
+        debug_log(f"ℹ️ {sym} hızlı satışta bakiye yetersiz; bakiye sorgulanarak satılacak.")
+        return None
+
+
 async def _tam_cikis(sym, p, exit_msg, tick, i_mik, adet, ai, kasa_tipi, simdi):
+    try:
+        order = await _hizli_tam_satis(sym, adet, tick)
+    except Exception as ex:
+        debug_log(f"⚠️ TAM ÇIKIŞ Hatası ({sym}): {ex}")
+        seyrek_bildir(f"cikis:{sym}", f"🚨 {sym} {exit_msg} satışı BAŞARISIZ, tekrar denenecek: {ex}", aralik=300)
+        return
+    if order is None:
+        order = await _bakiyeyle_tam_satis(sym, p, exit_msg, tick, adet, simdi)
+        if order is None:
+            return
+    g_satis = get_fill_price(order, tick)
+    net_kd, g_oran = net_kar_hesapla(p.giris, g_satis, i_mik)
+    try:
+        _pozisyonu_kapat(sym)  # önce durum: aynı pozisyon ikinci kez satılmaya çalışılmasın
+    except Exception as ex:
+        bildir(f"🚨 {sym} SATILDI ama Redis temizlenemedi ({ex}). Pozisyonu kontrol et!")
+    add_to_total_profit(net_kd)
+    try:
+        if "STOP" in exit_msg:
+            count = int(db.hget(f"{PREF}:stop_counts", sym) or 0) + 1
+            if count >= 2:
+                db.hset(f"{PREF}:kara_liste", sym, str(time.time() + 86400)); db.hdel(f"{PREF}:stop_counts", sym)
+                bildir(f"🚫 **KARA LİSTE**: {sym} peş peşe 2 kez stop ettirdi. 24 Saat uzak durulacak.")
+            else: db.hset(f"{PREF}:stop_counts", sym, str(count))
+        else:
+            # "peş peşe": stop dışı her çıkış sayacı sıfırlar (eskiden yalnız trend çıkışı sıfırlıyordu;
+            # arada kâr kilidiyle kapanan coin eski bir stop yüzünden kara listeye giriyordu)
+            db.hdel(f"{PREF}:stop_counts", sym)
+    except Exception as ex:
+        debug_log(f"⚠️ Stop sayacı güncellenemedi ({sym}): {ex}")
+    await save_trade_to_csv(_islem_satiri(sym, ai, kasa_tipi, p.giris, g_satis, g_oran, net_kd, exit_msg,
+                                          (simdi - p.giris_zamani) / 3600), ai, _islem_ek(sym, p))
+    bildir(f"{'🟢' if net_kd >= 0 else '🔴'} **{exit_msg}**: {sym}\n🛒 `{fiyat_yaz(p.giris)} ➔ {fiyat_yaz(g_satis)}`\n💸 Net: `{net_kd:+.2f} USDT` (Net: %{g_oran*100:.2f})")
+
+
+async def _bakiyeyle_tam_satis(sym, p, exit_msg, tick, adet, simdi):
+    """Bakiye sorgulu satış (takip adedi yok/küçük ya da hızlı satışta bakiye yetersiz). Dönen: emir | None."""
     satilacak_miktar, serbest = await _satilabilir_miktar(sym, adet, 1.0)
     if satilacak_miktar * tick <= MIN_NOTIONAL_USDT:
         # V18.3: hiçbir şey yapılmıyordu -> pozisyon sonsuza dek takılı kalıyor, her 2 sn'de fetch_balance
@@ -627,27 +699,7 @@ async def _tam_cikis(sym, p, exit_msg, tick, i_mik, adet, ai, kasa_tipi, simdi):
         debug_log(f"⚠️ TAM ÇIKIŞ Hatası ({sym}): {ex}")
         seyrek_bildir(f"cikis:{sym}", f"🚨 {sym} {exit_msg} satışı BAŞARISIZ, tekrar denenecek: {ex}", aralik=300)
         return
-    g_satis = get_fill_price(order, tick)
-    net_kd, g_oran = net_kar_hesapla(p.giris, g_satis, i_mik)
-    try:
-        _pozisyonu_kapat(sym)  # önce durum: aynı pozisyon ikinci kez satılmaya çalışılmasın
-    except Exception as ex:
-        bildir(f"🚨 {sym} SATILDI ama Redis temizlenemedi ({ex}). Pozisyonu kontrol et!")
-    add_to_total_profit(net_kd)
-    try:
-        if "STOP" in exit_msg:
-            count = int(db.hget(f"{PREF}:stop_counts", sym) or 0) + 1
-            if count >= 2:
-                db.hset(f"{PREF}:kara_liste", sym, str(time.time() + 86400)); db.hdel(f"{PREF}:stop_counts", sym)
-                bildir(f"🚫 **KARA LİSTE**: {sym} peş peşe 2 kez stop ettirdi. 24 Saat uzak durulacak.")
-            else: db.hset(f"{PREF}:stop_counts", sym, str(count))
-        elif "TREND" in exit_msg:
-            db.hdel(f"{PREF}:stop_counts", sym)
-    except Exception as ex:
-        debug_log(f"⚠️ Stop sayacı güncellenemedi ({sym}): {ex}")
-    await save_trade_to_csv(_islem_satiri(sym, ai, kasa_tipi, p.giris, g_satis, g_oran, net_kd, exit_msg,
-                                          (simdi - p.giris_zamani) / 3600), ai, _islem_ek(sym, p))
-    bildir(f"{'🟢' if net_kd >= 0 else '🔴'} **{exit_msg}**: {sym}\n🛒 `{p.giris:.4f} ➔ {g_satis:.4f}`\n💸 Net: `{net_kd:+.2f} USDT` (Net: %{g_oran*100:.2f})")
+    return order
 
 
 async def _pozisyonu_isle(sym, a_str, tick, ham, simdi):
@@ -786,7 +838,7 @@ async def _alim_yap(sym, ai_metrics, aktif_kasa):
                f"≤30 dk içinde sahiplenecek (giriş fiyatı kaybolur). Kontrol et!")
         return True  # alım GERÇEKLEŞTİ: bu turda ikinci alım yapılmasın
 
-    msg = f"🟢 **YENİ POZİSYON**: {sym}\nFiyat: `{gerceklesen_fiyat:.4f}`\nKasa: `{formatted_amount * gerceklesen_fiyat:.2f} USDT`"
+    msg = f"🟢 **YENİ POZİSYON**: {sym}\nFiyat: `{fiyat_yaz(gerceklesen_fiyat)}`\nKasa: `{formatted_amount * gerceklesen_fiyat:.2f} USDT`"
     if ai_s is not None: msg += f"\n🧠 AI Skoru: %{ai_s*100:.1f}" + (" _(gölge mod)_" if AI_GOLGE_MOD else "")
     if is_w: msg += "\n🐋 **BALİNA TESPİT EDİLDİ!**"
     bildir(msg)

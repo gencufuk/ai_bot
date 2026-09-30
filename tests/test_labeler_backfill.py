@@ -224,3 +224,44 @@ def test_sinyal_dakikasinin_sinyal_oncesi_fiyati_etiketi_bozmaz():
     assert e['sonuc'] == 'TP' and e['getiri'] > 0
     hizali = sl.mumlari_getir(Ex(), 'X/USDT', T)              # dakika başı sinyal: mum olduğu gibi kalır
     assert hizali[0] == mumlar[0]
+
+
+def _btc_seri(n, tohum):
+    rng = np.random.default_rng(tohum)
+    r = rng.normal(0, 0.003, n)
+    r[rng.integers(300, n, 6)] -= 0.02                                  # ani çöküşler (koruma dalı)
+    c = 60000 * np.exp(np.cumsum(r))
+    o = np.r_[c[0], c[:-1]]
+    return pd.DataFrame({'ts': T0 + 900_000 * np.arange(n), 'o': o,
+                         'h': np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.001, n))),
+                         'l': np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.001, n))), 'c': c, 'v': 1.0})
+
+
+@pytest.mark.parametrize('tohum', [0, 7])
+def test_btc_baglami_vektorel_pencereli_ile_ayni_karari_verir(tohum):
+    """Canlı bot EMA200'ü her turda son 300 mumla hesaplar; vektörel hesap aynı kararları vermeli."""
+    df = _btc_seri(1200, tohum)
+    a, b = bf.btc_baglami(df), bf.btc_baglami_pencereli(df)
+    assert list(a.index) == list(b.index) and len(a) == 1200 - bf.PENCERE_BTC + 1
+    assert (a['btc_ok'] == b['btc_ok']).all() and (a['rejim'] == b['rejim']).all()
+    assert np.abs(a['btc_ema_uzaklik'] - b['btc_ema_uzaklik']).max() < 1e-9
+    assert np.abs(a['btc_adx'] - b['btc_adx']).max() < 1e-4
+    assert a['btc_ok'].nunique() == 2 and a['rejim'].nunique() == 2      # iki dal da sınandı
+
+
+def test_radar_penceresi_erken_yukseleni_secer():
+    """pencere=16 (4 saat): 24 saatte az ama son 4 saatte çok yükselen parite ilk 10'a girer."""
+    n = 300
+    seriler = {}
+    for i in range(12):
+        c = np.full(n, 100.0)
+        c[-96:] *= np.linspace(1.0, 1.10 + 0.01 * i, 96)               # 24 saatte %10-21 yükselenler
+        seriler[f'Y{i}/USDT'] = pd.DataFrame({'ts': T0 + 900_000 * np.arange(n), 'c': c, 'v': 1e6})
+    c = np.full(n, 100.0)
+    c[-16:] *= np.linspace(1.0, 1.08, 16)                               # yalnız son 4 saatte %8
+    seriler['ERKEN/USDT'] = pd.DataFrame({'ts': T0 + 900_000 * np.arange(n), 'c': c, 'v': 1e6})
+    ilk24, _ = bf.radar_paneli(seriler)
+    ilk4, _ = bf.radar_paneli(seriler, pencere=16)
+    son = ilk24.index[-1]
+    assert not ilk24.at[son, 'ERKEN/USDT'] and ilk4.at[son, 'ERKEN/USDT']
+    assert int(ilk24.loc[son].sum()) == 10 and int(ilk4.loc[son].sum()) == 10

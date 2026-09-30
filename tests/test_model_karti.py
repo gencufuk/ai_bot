@@ -52,6 +52,22 @@ def test_yasak_featureli_model_reddedilir(tmp_path):
     assert 'yüklenemedi' in y.yenile() and not y.yuklu
 
 
+def test_kartsiz_model_surumu_icerikten_iki_sunucuda_ayni(tmp_path):
+    """Eskiden 'legacy-<değişiklik zamanı>': kopyalanan aynı model iki sunucuda farklı görünüyordu."""
+    a, b = tmp_path / 'a', tmp_path / 'b'
+    a.mkdir(); b.mkdir()
+    kucuk_model(['Giris_RSI']).save_model(str(a / 'core_xgboost_model.json'))
+    shutil.copy(a / 'core_xgboost_model.json', b / 'core_xgboost_model.json')
+    os.utime(b / 'core_xgboost_model.json', (1_700_000_000, 1_700_000_000))   # farklı zaman damgası
+    ya = ModelYuvasi(str(a / 'core_xgboost_model.json'), 'core', 0.65, 'min')
+    yb = ModelYuvasi(str(b / 'core_xgboost_model.json'), 'core', 0.65, 'min')
+    ya.yenile(); yb.yenile()
+    assert ya.surum == yb.surum and ya.surum.startswith('legacy-') and len(ya.surum) == len('legacy-') + 8
+    kucuk_model(['Giris_RSI'], seed=3).save_model(str(b / 'core_xgboost_model.json'))
+    yb.yenile()
+    assert yb.surum != ya.surum                               # içerik değişince sürüm de değişir
+
+
 def test_dosya_silinince_model_devre_disi(tmp_path):
     yol = str(tmp_path / 'filter_model.json')
     kucuk_model(['Giris_RSI']).save_model(yol)

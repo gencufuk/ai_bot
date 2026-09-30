@@ -570,3 +570,32 @@ Rapor ve günlük getiriler: `veri/arastirma_2026-09-30/strateji_rapor.txt`, `st
 
   Hiçbir varyant iki dönemde de zarar etmiyor ve 2025–26'daki düşüş al-tutun yarısına iniyor. Getiri ise mütevazı: 90 USDT için 2025–26'da MA50'de ayda ~1 USDT. MA seçimi sonuca belirgin etki ediyor; sınama dönemi 21 ay.
 - **Sonuç:** Test edilen kısa vadeli alım kurallarının hiçbiri, kurulduktan sonraki dönemde (2025–26) komisyon sonrası güvenilir biçimde kazandırmadı. Kanıtı olan tek yaklaşım yavaş bir trend filtresi. O da piyasada kalma kararını iyileştiriyor (düşüşü yarıya indiriyor), günlük kazanç üretmiyor.
+
+### 11.2 Mevcut botu iyileştirme (30 Eylül)
+**Veride denenen fikirler.** Kaynaklar: 6 aylık etiketli sinyaller, canlı ayara uyan 652 sinyal. İkiye bölündü: Nisan–Haziran ve Temmuz–Eylül.
+- **Daha erken satmak** (aynı stopla sabit kâr hedefi, 4 saat): kazanma oranı %44'ten %59–67'ye çıkıyor, ama sinyal başı ortalama kötüleşiyor. Kaybedenler yine tam stop yiyor, kazançlar ise sınırlanıyor; kârı birkaç büyük kazanan taşıyor.
+
+  | Çıkış | Sinyal başı | Kazanma |
+  |---|---|---|
+  | Mevcut etiket çıkışı | %−0.08 | %44 |
+  | Hedef %0.6 | %−0.21 | %67 |
+  | Hedef %1 | %−0.17 | %59 |
+  | Hedef %1.5 | %−0.15 | %52 |
+  | Hedef %2 | %−0.18 | %46 |
+
+  Uygulanmadı.
+- **Daha erken girmek** (son 3 saatte az yükselmiş ya da 15 dakikalık EMA'ya yakın sinyaller): tutarlı bir etki yok. Bir yarıda en iyi olan çeyrek, diğerinde en kötü. Uygulanmadı.
+- **BTC günlük trend filtresi** (50 günlük ortalamanın altındayken alım yok):
+  - Botun yaklaşımının günlük vekilinde 2025–26 zararını %−89'dan %−54'e indiriyor, ama artıya çevirmiyor. 2023–24'te faydası yok.
+  - Sinyal verisinde tutarsız: Nisan–Haziran'da trendli günler daha kötü (%−0.15'e %−0.08), Temmuz–Eylül'de biraz daha iyi.
+  - Kanıt yetersiz; uygulanmadı.
+
+**Uygulanan iyileştirmeler** (strateji aynı; maliyet ve doğruluk):
+- **Hızlı stop satışı.** Takip edilen adet biliniyorsa satıştan önce bakiye sorulmaz; bir istek turu kazanılır. Bakiye yetersizse (ör. komisyon coin'den kesildiyse) eski, bakiye sorgulu yola düşülür. Diğer hatalarda eskisi gibi bir sonraki turda tekrar denenir; belirsiz sonuçta aynı turda ikinci satış yapılmaz.
+- **Kara liste sayacı gerçekten "peş peşe" sayar.** Stop dışı her çıkış sayacı sıfırlar; eskiden yalnız trend çıkışı sıfırlıyordu. Simülatörün bütçe oynatması da aynı kurala geçti.
+- **Telegram fiyatları ~6 anlamlı basamakla yazılır.** Eskiden 4 ondalıkla yazıldığı için ucuz coinlerde giriş ve çıkış fiyatı aynı görünüyordu (`0.0007 ➔ 0.0007`).
+- **Kartsız model sürümü dosya içeriğinden türetilir** (`legacy-<sha256[:8]>`). Aynı model iki sunucuda aynı adı taşır.
+- **BTC bağlamı vektörel hesaplanır.** Pencere-başı EMA kapalı formla, ADX tüm seriden. Eski döngüyle kararlar birebir aynı (testte iki seri; EMA farkı ~1e-13, ADX ~1e-6); ~130 kat hızlı. 9 aylık simülasyonda sunucuda ~1 saat süren adım yarım dakikaya iner.
+- **Simülatöre `--radar-saat` deneyi eklendi.** Kullanıcının "yükselişi erken yakala" fikri için: radar son N saatte en çok yükselenleri tarar (canlı bot 24). Sonuç bekleniyor.
+
+**Kullanıcı tarafı:** Binance'te komisyonu BNB ile ödemek ücreti %25 düşürür (işlem başına %0.1 → %0.075). 9 aylık simülasyonun 685 işleminde (20 USDT) bu ~6.9 USDT eder; −30.2 USDT'lik zararın yaklaşık dörtte biri.
