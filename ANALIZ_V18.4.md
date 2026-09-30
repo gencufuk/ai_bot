@@ -375,6 +375,7 @@ cd /root && /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-0
 /root/venv/bin/python tools/v184_simulasyon.py --baslangic 2026-08-07 --bitis 2026-09-06 --kaynak gercek   # önbellekten, hızlı
 ```
 Çıktı `v184_sim_rapor.txt`: (1) simülatör doğrulaması, (2) filtrelerin gerçek girişlerdeki etkisi, (3) çıkış mantığının etkisi (dönem bazında, %95 güven aralığıyla), (4) her senaryo için 100/450 USDT sonuçları, (5) backfill senaryolarının sinyal başı sonucu ve canlı kuruluma (`B_V184_AI`) göre farkı; ATR %3–4 ve yatay rejim sinyallerinin kendi ortalaması (gün bazlı bootstrap güven aralığıyla). Yalnız backfill, eski raporu ezmeden: `--kaynak backfill --cikti /root/v184_sim_b`. İndirilen veri `sim_onbellek/` klasöründe kalır.
+30 Eylül: (6) ay ay sonuç eklendi: canlı kurulumun her bütçe için aylık kârı ve ay sonu bakiyesi, altında tüm senaryoların aylık kârı. Uzun dönem için bellek düşürüldü (mumlar DataFrame'e alınınca depodan bırakılır, 1m veri bellekte birikmez); sonuçlar değişmedi (aynı sentetik veride çıktılar birebir aynı). 250 sembol × 9 ay: sentetik borsada ~4 dk hesap, ~10.500 API isteği, ~0.8 GB ek bellek (kütüphanelerle ~1 GB), ~0.5 GB önbellek. Komut: `--baslangic 2026-01-01 --kaynak backfill --mod sabit --cikti /root/v184_sim_9ay` (KURULUM.md).
 
 ### 10.4 Sunucu sonuçları (26 Eylül: 5 Ağustos – 26 Eylül, 312 gerçek pozisyon + 250 coinlik backfill)
 Rapor ve log: `veri/sim_2026-09-26/`. Kullanılan AI: canlıdaki eski core model (kartsız, 0.65 eşik; ilk 68 işlemle, 31 May–15 Haz eğitildi, yani bu dönem için örneklem dışı).

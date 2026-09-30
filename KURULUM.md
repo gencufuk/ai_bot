@@ -171,6 +171,15 @@ yoğun veri çeker.
 screen -dmS sim bash -c "cd /root && venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-08-05 > sim.log 2>&1"
 cat /root/v184_sim_rapor.txt      # bitince
 ```
+**Uzun dönem (ör. son 9 ay), yalnız Binance fiyat verisiyle.** Botun alım kuralları geçmiş mumlara uygulanır; işlem
+kayıtları kullanılmaz. 1-2 saat sürer, ~1 GB disk önbelleği (`sim_onbellek/`) ve ~1 GB bellek kullanır; başlamadan `free -h` ile
+"available" sütununa bakın, 1.5 GB'tan azsa VS Code gibi açık programları kapatın. `nice` botu
+öncelikte tutar. Raporun 6. bölümü ay ay kâr ve ay sonu bakiyesini verir.
+```bash
+screen -dmS sim9 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --kaynak backfill --mod sabit --cikti /root/v184_sim_9ay > sim_9ay.log 2>&1"
+tail -3 /root/sim_9ay.log         # ilerleme
+cat /root/v184_sim_9ay_rapor.txt  # bitince
+```
 
 ## Geri dönüş
 - Kod güncellemesini geri almak: botu durdurun, `eski_kod_<tarih>/` içindekileri `/root`'a geri taşıyın.

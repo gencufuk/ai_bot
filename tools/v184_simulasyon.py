@@ -55,6 +55,9 @@ Kullanım (sunucuda, bot çalışırken de olur; API anahtarı gerekmez, yalnız
 İndirilen mumlar sim_onbellek/ klasöründe tutulur; ikinci çalıştırma çok daha hızlıdır.
 Çıktılar: v184_sim_rapor.txt (özet), v184_sim_rapor.json, v184_sim_pozisyonlar.csv, v184_sim_backfill.csv
 Yalnız piyasa taraması, eski raporu ezmeden:  ... --kaynak backfill --cikti /root/v184_sim_b
+Uzun dönem (ör. 9 ay, 250 sembol; 1-2 saat, ~1 GB disk önbelleği, ~1 GB bellek; screen içinde çalıştırın):
+  ... --baslangic 2026-01-01 --kaynak backfill --mod sabit --cikti /root/v184_sim_9ay
+Raporun 6. bölümü ay ay kâr ve ay sonu bakiyesini verir.
 """
 import argparse
 import datetime
@@ -262,6 +265,12 @@ class MumDeposu:
             return v
         i, j = np.searchsorted(v[:, 0], [a, b], side='left')
         return v[i:j]
+
+    def bosalt(self, tf=None, sym=None):
+        """Bellekteki mumları bırakır; disk önbelleği kalır ve gerekirse yeniden okunur. Uzun dönemlerde (ör. 9 ay,
+        250 sembol) tüm mumları bellekte tutmak bot ile aynı sunucuda 1 GB'ı aşıyordu."""
+        for k in [k for k in self._veri if (tf is None or k[1] == tf) and (sym is None or k[0] == sym)]:
+            del self._veri[k], self._kapsam[k]
 
     def getir_df(self, sym, tf, a, b) -> pd.DataFrame:
         df = ohlcv_df(self.getir(sym, tf, a, b).tolist())
@@ -771,10 +780,13 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
             seriler15[s] = depo.getir_df(s, '15m', veri_bas, bit_ms + int(motor.max_saat * SAAT_MS) + MUM_15M_MS)
         except VeriYok:
             continue
+        depo.bosalt('15m', s)   # DataFrame'e kopyalandı; depodaki ikinci kopya uzun dönemde yüzlerce MB'a çıkıyordu
         if n % 50 == 0:
             log(f"  15m veri: {n}/{len(semboller)} sembol ({depo.istek} API isteği)")
     seriler15 = {s: d for s, d in seriler15.items() if len(d) > bf.PENCERE_15M}
-    ilk_n, genislik = bf.radar_paneli({s: d[d['ts'] < bit_ms] for s, d in seriler15.items()})
+    # bit_ms sonrası satırlar (--bitis geçmişteyse çıkış simülasyonu için) önceki anların sırasını değiştirmez:
+    # değişim/hacim geriye dönük, sıralama satır içi. Sinyaller zaten yalnız bit_ms'e kadar üretilir.
+    ilk_n, genislik = bf.radar_paneli(seriler15)
     ayar = SinyalAyarlari(max_atr_pct=max(MAX_ATR_V184, MAX_ATR_V1802) / 100)
     sinyaller = []
     for s, df15 in seriler15.items():
@@ -787,6 +799,8 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
             i = x.pop('_i')
             x['degisim_24s'] = float(df15_sinyal['c'].iloc[i] / df15_sinyal['c'].iloc[i - 96] - 1) if i >= 96 else 0.0
             sinyaller.append(x)
+        depo.bosalt('1h')
+    del ilk_n, genislik
     v184 = [x for x in sinyaller if x.get('BTC_OK') and depo_etiket.sayi(x.get('Giris_ATR_Pct'), 99.0) <= MAX_ATR_V184]
     log(f"  {len(sinyaller)} sinyal üretildi (ATR <= %{MAX_ATR_V1802:.0f}, BTC durumundan bağımsız); V18.4 kuralına "
         f"uyan {len(v184)} ({sum(x['Rejim'] == 'TREND' for x in v184)} TREND rejiminde); çıkışlar simüle ediliyor...")
@@ -801,6 +815,8 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
     for n, x in enumerate(sorted(sinyaller, key=lambda z: (z['Ts'], -z['degisim_24s'])), 1):
         if n % 200 == 0:
             log(f"  {n}/{len(sinyaller)} sinyal ({depo.istek} API isteği)")
+        if n % 50 == 0:
+            depo.bosalt('1m')
         sym, ts = x['Sembol'], int(x['Ts'])
         ai_skor = ai_skoru(yuva, {k: x.get(k) for k in x}) if yuva else None
         btc_ok, btc_ok_eski = bool(x.get('BTC_OK')), bool(btc.eski_ok(ts))
@@ -812,7 +828,8 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
         giris = float(x['Fiyat']) * (1 + ALIM_KAYMASI)
         balina = depo_etiket.is_whale_tahmini(x)
         d15 = seriler15[sym]
-        m15 = d15[(d15['ts'] >= ts - 101 * MUM_15M_MS)].to_numpy(dtype=float)
+        m15 = d15[(d15['ts'] >= ts - 101 * MUM_15M_MS)
+                  & (d15['ts'] <= ts + int(motor.max_saat * SAAT_MS) + MUM_15M_MS)].to_numpy(dtype=float)
         satir = {'sembol': sym, 'giris_ms': ts, 'giris': _tarih(ts), 'giris_fiyat': giris,
                  'kasa_tipi': 'BALİNA' if balina else 'NORMAL', 'rejim': x['Rejim'], 'btc_ok': btc_ok,
                  'btc_ok_eski': btc_ok_eski, 'atr_pct': x.get('Giris_ATR_Pct'), 'rsi': x.get('Giris_RSI'),
@@ -1021,6 +1038,51 @@ def cikis_etkisi(tablo: pd.DataFrame) -> dict:
     return sonuc
 
 
+ANA_SENARYO_SIRASI = ('B_V184_AI', 'V184_AI', 'B_V184', 'V184')   # ay ay tablonun ayrıntılı gösterdiği senaryo
+
+
+def aylik_bolum(butce_tablosu) -> List[str]:
+    """Rapora ay ay tablo: ana senaryo (canlı kurulum) her bütçe için ay sonu bakiyesiyle, altında tüm senaryoların
+    aylık kârı. Sabit kasa tercih edilir (canlı bot sabit tutarla işlem açar). Kâr, işlemin KAPANDIĞI aya yazılır."""
+    if not butce_tablosu:
+        return []
+    modlar = [r['mod'] for r in butce_tablosu]
+    mod = 'sabit' if 'sabit' in modlar else modlar[0]
+    satirlar = [r for r in butce_tablosu if r['mod'] == mod]
+    aylar = sorted({ay for r in satirlar for ay in (r.get('aylik') or {})})
+    if not aylar:
+        return []
+    aylar = [str(p) for p in pd.period_range(aylar[0], aylar[-1], freq='M')]   # işlemsiz aylar da görünsün
+    adlar = list(dict.fromkeys(r['senaryo'] for r in satirlar))
+    ana = next((a for a in ANA_SENARYO_SIRASI if a in adlar), adlar[0])
+    bos = {'islem': 0, 'kar_usdt': 0.0, 'kazanma': 0.0}
+    y = ['', f"6) AY AY SONUÇ ({'sabit kasa: işlem başına 20 USDT, balina 40' if mod == 'sabit' else mod + ' kasa'}; "
+             f"kâr, işlemin kapandığı aya yazılır)"]
+    for r in sorted((r for r in satirlar if r['senaryo'] == ana), key=lambda r: -r['butce']):
+        y += [f"   {ana}: {SENARYO_ACIKLAMA.get(ana, '')}; {r['butce']:.0f} USDT ile başlasaydı:",
+              f"   {'ay':8s} {'işlem':>5s} {'kâr USDT':>9s} {'kazanan':>8s} {'ay sonu bakiye':>15s}"]
+        bakiye, kazanan = r['butce'], 0.0
+        for ay in aylar:
+            v = r['aylik'].get(ay, bos)
+            bakiye += v['kar_usdt']
+            kazanan += v['kazanma'] * v['islem']
+            oran = f"{v['kazanma'] * 100:7.0f}%" if v['islem'] else '       -'
+            y.append(f"   {ay:8s} {int(v['islem']):5d} {v['kar_usdt']:+9.2f} {oran} {bakiye:15.2f}")
+        y.append(f"   {'TOPLAM':8s} {r['islem']:5d} {r['toplam_kar']:+9.2f} "
+                 f"{(kazanan / r['islem'] * 100 if r['islem'] else 0):7.0f}% {r['butce'] + r['toplam_kar']:15.2f}"
+                 f"   (getiri {r['getiri_pct']:+.1f}%, en büyük düşüş {r['max_dusus_pct']:.1f}%)")
+    butce = max(r['butce'] for r in satirlar)
+    tablo = {r['senaryo']: r for r in satirlar if r['butce'] == butce}
+    y += [f"   Tüm senaryolar, aylık kâr (USDT; {butce:.0f} USDT bütçe):",
+          f"   {'ay':8s} " + ' '.join(f"{ad:>13s}" for ad in tablo)]
+    for ay in aylar:
+        y.append(f"   {ay:8s} " + ' '.join(f"{r['aylik'].get(ay, bos)['kar_usdt']:+13.2f}" for r in tablo.values()))
+    y += [f"   {'TOPLAM':8s} " + ' '.join(f"{r['toplam_kar']:+13.2f}" for r in tablo.values()),
+          f"   {'işlem':8s} " + ' '.join(f"{r['islem']:13d}" for r in tablo.values()),
+          f"   {'maxDD':8s} " + ' '.join(f"{r['max_dusus_pct']:12.1f}%" for r in tablo.values())]
+    return y
+
+
 def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu, backfill=None) -> str:
     y = [f"V18.4 GEÇMİŞ SİMÜLASYONU | {meta['baslangic']} → {meta['bitis']} | {meta['olusturma']}",
          f"Ayarlar: kayma seviye %{meta['kayma_seviye'] * 100:.2f} / zaman %{meta['kayma_zaman'] * 100:.2f} | "
@@ -1082,6 +1144,7 @@ def rapor_metni(meta, dogrulama, filtreler, etki, butce_tablosu, backfill=None) 
         for ad, k in backfill['eklenen'].items():
             y.append(f"   {adlar.get(ad, ad)}: n={k['n']} | ort {_pct(k['ort'])} {ga(k['ga'])} | "
                      f"kazanan %{k['kazanan'] * 100:.0f}")
+    y += aylik_bolum(butce_tablosu)
     y += ['', 'Senaryolar: ' + ' | '.join(f"{k}: {v}" for k, v in SENARYO_ACIKLAMA.items()
                                           if any(r['senaryo'] == k for r in butce_tablosu))]
     return '\n'.join(y)
@@ -1104,7 +1167,8 @@ def calistir(ex, a, simdi_ms=None, log=print):
     notlar = []
     if yuva is not None and ai_egitim_son is None:
         notlar.append("AI modeli kartsız: eğitim dönemi bilinmiyor. Mevcut eski core model için adli analiz: ilk 68 "
-                      "işlem (31 May-15 Haz) -> Ağustos sonrası örneklem dışı.")
+                      "işlem (31 May-15 Haz); bu iki haftadaki girişlerin AI skoru örneklem içi olabilir, diğer "
+                      "dönemler örneklem dışı.")
     if yuva is not None and ai_egitim_son is not None and ai_egitim_son >= bit_ms:
         notlar.append(f"AI modeli simülasyon dönemini de içeren veriyle eğitilmiş ({_tarih(ai_egitim_son)}'e kadar): "
                       f"AI senaryoları atlandı (örneklem içi olurdu).")
@@ -1157,6 +1221,8 @@ def calistir(ex, a, simdi_ms=None, log=print):
         yazilacak.append((tablo, a.cikti + '_pozisyonlar.csv'))
 
     if 'backfill' in a.kaynak:
+        notlar.append(f"Piyasa taraması evreni bugünün en hacimli {a.evren} paritesi: dönem içinde delist olan coinler "
+                      f"yok, sonuç biraz iyimser olabilir.")
         log(f"Backfill: evren seçiliyor (en hacimli {a.evren} USDT paritesi) ve sinyaller üretiliyor...")
         try:
             btablo, yuva_b = backfill_kaynak(depo, ex, btc, bas_ms, bit_ms, a.evren, motor_v184, yuva, log=log,

@@ -673,6 +673,33 @@ def test_backfill_senaryolari_ayni_havuzu_suzer():
     assert [x['sembol'] for x in vs.backfill_senaryolari(tablo, Yeni())['B_V1802']] == ['A', 'B', 'C', 'D', 'E', 'G']
 
 
+def test_aylik_bolum_ay_sonu_bakiye_ve_senaryo_tablosu():
+    def satir(ad, butce, aylik, kar, n, mod='sabit'):
+        return {'senaryo': ad, 'butce': butce, 'mod': mod, 'islem': n, 'toplam_kar': kar,
+                'getiri_pct': kar / butce * 100, 'max_dusus_pct': -2.0, 'aylik': aylik}
+    ocak_ai = {'islem': 1, 'kar_usdt': -0.5, 'kazanma': 0.0}
+    mart = {'islem': 3, 'kar_usdt': 2.0, 'kazanma': 2 / 3}
+    tablo = [satir('B_V184', 450, {'2026-01': {'islem': 2, 'kar_usdt': 1.0, 'kazanma': 0.5}}, 1.0, 2),
+             satir('B_V184_AI', 450, {'2026-01': ocak_ai, '2026-03': mart}, 1.5, 4),
+             satir('B_V184_AI', 100, {'2026-03': mart}, 2.0, 3),
+             satir('B_V184_AI', 450, {'2026-01': {'islem': 9, 'kar_usdt': 9.0, 'kazanma': 1.0}}, 9.0, 9, mod='oransal')]
+    y = vs.aylik_bolum(tablo)
+    assert 'AY AY SONUÇ (sabit kasa' in y[1]           # canlı bot gibi sabit kasa tercih edilir
+    bas = y.index(next(s for s in y if '450 USDT ile' in s))
+    blok = [s.split() for s in y[bas + 2:bas + 6]]
+    # Ocak -0.50 -> 449.50; Şubat işlemsiz (yine de görünür) 449.50; Mart +2.00 -> 451.50; toplamda %50 kazanan
+    assert blok[0] == ['2026-01', '1', '-0.50', '0%', '449.50']
+    assert blok[1] == ['2026-02', '0', '+0.00', '-', '449.50']
+    assert blok[2] == ['2026-03', '3', '+2.00', '67%', '451.50']
+    assert blok[3][:5] == ['TOPLAM', '4', '+1.50', '50%', '451.50']
+    assert any('100 USDT ile' in s for s in y) and y.index(next(s for s in y if '100 USDT ile' in s)) > bas
+    mat = y[y.index(next(s for s in y if 'Tüm senaryolar' in s)):]
+    assert mat[1].split() == ['ay', 'B_V184', 'B_V184_AI'] and '450 USDT bütçe' in mat[0]
+    assert mat[2].split() == ['2026-01', '+1.00', '-0.50'] and mat[4].split() == ['2026-03', '+0.00', '+2.00']
+    assert mat[5].split() == ['TOPLAM', '+1.00', '+1.50'] and mat[6].split() == ['işlem', '2', '4']
+    assert vs.aylik_bolum([]) == [] and vs.aylik_bolum([satir('B_V184', 100, {}, 0.0, 0)]) == []
+
+
 def test_backfill_karsilastirmasi_eklenen_sinyalleri_ayri_olcer():
     def islem(sembol, gun, getiri):
         return {'sembol': sembol, 'giris_ms': T0 + gun * vs.GUN_MS, 'kasa_tipi': 'NORMAL',
@@ -718,3 +745,5 @@ def test_uctan_uca_backfill_eski_kartsiz_modelle(dunya, tmp_path):
     assert any(s < 0.65 for s in skor.values())                  # model gerçekten bazı sinyalleri eliyor
     metin = (tmp_path / 'sim_rapor.txt').read_text(encoding='utf-8')
     assert '(taban)' in metin and 'B_V1802' in metin
+    assert 'AY AY SONUÇ (sabit kasa' in metin and 'B_V184_AI: backfill, V18.4 + AI (canlıdaki kurulum); 100 USDT ile' in metin
+    assert any('delist' in n for n in sonuc['meta']['notlar'])
