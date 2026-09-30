@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor. Kullanıcının "yükselişi erken yakala" fikri 9 ayda test edildi (§11.3): 4 saatlik radar 24 saatlikten kötü, canlı radar değişmedi. Kaybettiren çıkışların %86'sı stop; stopların yarısı alımdan sonraki 32 dakikada. "Daha erken sat" fikri çıkış ayarlarıyla aynı sinyallerde denendi (§11.4): kârı erken almak kötüleştiriyor; yalnız 2 saatlik zaman aşımı tutarlı iyileşme gösteriyor, ama kanıt sınırda. Canlıya almadan önce 2025 verisinde doğrulanacak.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor. Kullanıcının "yükselişi erken yakala" fikri 9 ayda test edildi (§11.3): 4 saatlik radar 24 saatlikten kötü, canlı radar değişmedi. Kaybettiren çıkışların %86'sı stop; stopların yarısı alımdan sonraki 32 dakikada. "Daha erken sat" fikri çıkış ayarlarıyla aynı sinyallerde denendi (§11.4): kârı erken almak kötüleştiriyor; yalnız 2 saatlik zaman aşımı tutarlı iyileşme gösteriyor. Bu sonuç bağımsız dönemde (Nisan–Aralık 2025) doğrulandı (§11.5), ama etkisi küçük: canlı kurulum 18 ayın 17'sinde zararda ve bu değişiklik tabloyu değiştirmiyor.
 
 ---
 
@@ -683,3 +683,26 @@ Karar kuralı önceden belli: bir varyant yalnız 9 ayın tamamında ve iki yar�
 - **Ama kanıt sınırda.** GA sıfırı kıl payı içeriyor (P(fark > 0) = 0.96). Üstelik altı varyantın en iyisi seçildi. §11.3'teki karar kuralının "GA sıfırı dışlasın" şartı karşılanmıyor.
 
 **Karar:** canlı ayar değişmedi. ZAMAN2 bağımsız bir dönemde (Nisan–Aralık 2025) doğrulanacak; komşu değerler (1.5 ve 3 saat) de denenecek. Önceden belirlenen kural: 2025'te de ZAMAN2'nin sinyal başı farkı artıda ve bütçe sonucu tabandan iyiyse `max_bekleme_saati` 4 → 2 önerilir (kullanıcı onayıyla). Bu değişiklik zararı azaltır, stratejiyi kârlı yapmaz: 9 ayda −30 yerine −15 USDT.
+
+### 11.5 Bağımsız dönemde doğrulama: Nisan–Aralık 2025 (30 Eylül, sunucu)
+**Kurulum.** Aynı araçla 1 Nisan – 31 Aralık 2025 girişleri oynatıldı: canlı kurulum ve üç zaman aşımı (1.5 / 2 / 3 saat). 2026 deneyinde öne çıkan ZAMAN2 için karar kuralı önceden yazılmıştı (§11.4). Rapor: `veri/arastirma_2026-09-30/v184_sim_2025_zaman_rapor.txt`.
+
+**Sonuç: ZAMAN2 doğrulandı.**
+
+| | 2026 (Oca–Eyl) | 2025 (Nis–Ara) | 18 ay birlikte |
+|---|---|---|---|
+| Canlı kurulum, sinyal başı | %−0.10 (n=1032) | %−0.50 (n=1453) | |
+| ZAMAN2 farkı, puan [%95 GA] | +0.049 [−0.005, +0.103] | +0.035 [+0.001, +0.071] | +0.041 [+0.010, +0.071] |
+| 450 USDT: canlı → ZAMAN2 | −30.10 → −15.36 | −115.65 → −111.61 | |
+| 100 USDT: canlı → ZAMAN2 | −35.66 → −16.37 | −80.18 → −80.30 | |
+
+- **Doz-yanıt tekdüze** (2025): 1.5 saat +0.050 [+0.003, +0.101], 2 saat +0.035, 3 saat +0.021 [−0.008, +0.052]. Zaman aşımı kısaldıkça sonuç iyileşiyor; tesadüfi bir etkiden çok gerçek bir etkiye işaret ediyor. Ay bazında 2 saat 9 ayın 7'sinde artıda.
+- **Kazanç çoğunlukla stoptan kaçıştan geliyor** (2025): 81 işlem stop yerine −%2.70 → −%1.26 ile kapanıyor (+23.5 USDT). Karşılığında 24 kısmi kâr kazananı erken kesiliyor (−10.5 USDT).
+- **100 USDT satırı bilgi taşımıyor.** Bu bütçede iki senaryo da ~%80 kaybedip 20 USDT'lik işlem açamaz hale geliyor.
+- **Önceden belirlenen kural sağlandı:** 2025'te sinyal başı fark artıda ve 450 USDT bütçe sonucu daha iyi. 1.5 saat 2025'te biraz daha iyi, ama 2026'da denenmedi; seçim önceden belirlenen 2 saatte bırakıldı.
+
+**Büyük resim.** Canlı kurulum 18 ayın 17'sinde zararda; tek artı ay Ağustos 2026. 2025'te sinyal başı zarar %−0.50 [−0.71, −0.29], yani şansla açıklanamaz. 100 USDT ile Nisan–Aralık 2025'te bakiye 20 USDT'ye iniyor. ZAMAN2 bu tabloyu değiştirmiyor; işlem başına ~0.04 puanlık bir iyileşme.
+- **AI filtresi 2025'te fayda göstermedi.** AI'sız B_V184, AI'lı kurulumdan +0.04 puan [−0.06, +0.15] iyi. 2026'da ise AI faydalıydı: −0.15 [−0.29, −0.02]. Kanıt karışık.
+- **ATR sınırını %4'e çıkarmak iki dönemde de hafif artıda.** Eklenen ATR %3–4 sinyalleri 2026'da n=77, %+0.58; 2025'te n=81, %+0.35; ikisinde de %62–63'ü kazanıyor. GA iki dönemde de sıfırı içeriyor. İkinci aday; uygulanmadı.
+
+**Öneri:** `ai_bot.py` içinde `MAX_BEKLEME_SAATI` 4 → 2. Kullanıcı onayı bekleniyor. Etiket penceresi (`shadow_labeler`, `sniper/etiketleme.py`) eğitim verisinin tutarlılığı için 4 saat kalır.
