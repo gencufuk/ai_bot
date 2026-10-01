@@ -722,3 +722,23 @@ Soru: büyük coinlerde trend takibi 90 USDT ile ayda 5–10 USDT getirir mi? Ve
 - **En dengeli kural: MA100 ±%2 bant.** Yılda ~5 geçiş yapıyor, günlerin %58'inde pozisyonda. 2026'nın 9 ayında +10.7 USDT (tarama botu aynı dönemde simülasyonda −30…−36). Haziran çöküşünü −2.9 USDT ile geçti. 29 Eylül'de BTC, 100 günlük ortalamanın %19 üstünde (kural "BTC'de").
 - **10 coinli sepetin ortalaması daha yüksek ama maxDD %−71.** 90 USDT için uygun değil.
 - **Sınırlar:** Veri tek bir döngü (2023–24 boğa, 2025–26 yatay). Kural birkaç varyant arasından seçildi. Kapanışlar günlük, maliyet %0.15 varsayımı.
+
+### 11.7 "Yatay piyasada alım yapmasın": önceden bilinebilen rejim filtreleri (1 Ekim, yerel hesap)
+Kullanıcının önerisi: bot kötü piyasada hiç alım yapmasın, yalnız iyi koşullarda alsın. Bunun için alım anında BİLİNEN göstergeler denendi. Canlı kurulumun sinyalleri iki bağımsız dönemde: 2026 Ocak–Eylül (1032 sinyal) ve 2025 Nisan–Aralık (1453 sinyal). Günlük göstergeler dünkü kapanışa kadar hesaplandı (`strateji_gunluk.csv`). Botun kendi geçmişi için alım anından önce kapanmış sinyaller kullanıldı. Tabloda sinyal başı net getiri, alınan / atlanan.
+
+| Filtre | 2026: alınan / atlanan | 2025: alınan / atlanan |
+|---|---|---|
+| BTC'nin son 7 günü artıda | %+0.03 / %−0.31 | %−0.53 / %−0.44 |
+| En büyük 10 coin son 7 gün artıda | %+0.10 / %−0.42 | %−0.63 / %−0.35 |
+| Radar vekili (günün en çok yükselen 10'u) son 7 gün artıda | %+0.20 / %−0.45 | %−0.69 / %−0.33 |
+| Radar vekili son 3 gün artıda | %+0.07 / %−0.31 | %−0.58 / %−0.38 |
+| Sepet verimlilik oranı (14 g) > 0.3 | %+0.08 / %−0.23 | %−0.49 / %−0.50 |
+| Botun son 3 gün sonucu artıda | %−0.02 / %−0.19 | %−0.40 / %−0.55 |
+| Botun son 7 gün sonucu artıda | %−0.28 / %−0.01 | %−0.59 / %−0.48 |
+| Botun son 14 gün sonucu artıda | %+0.11 / %−0.19 | %−0.43 / %−0.50 |
+
+- **Piyasa göstergeleri 2026'da iyi seçiyor, 2025'te tersine dönüyor.** 2026'da filtreden geçen alımlar başa baş ya da hafif artıda, atlananlar belirgin eksi (gün bloklu GA'lar sıfırı dışlıyor). 2025'te aynı filtreler atladıklarından daha KÖTÜ alımları seçiyor.
+- **2025'te toplam zararı azaltmaları yalnız daha az işlemden.** Rastgele aynı oranda işlem atlamaktan iyi değiller.
+- **Botun kendi geçmişine bakan filtreler pencereye göre işaret değiştiriyor.** 3 ve 14 gün iki dönemde aynı yönde, 7 gün iki dönemde ters. Bu düzensizlik gürültüye işaret ediyor.
+- **2025'te strateji ölçülebilen her koşulda zararda** (sinyal başı %−0.33 ile %−0.69). Sorun rejim değil, giriş yöntemi: zaten yükselmiş coin'i almak.
+- **Sonuç:** önceden bilinebilen hiçbir rejim filtresi bu stratejiyi iki dönemde de kârlı yapmıyor. "Yatayda işlem yapma, yalnız oturmuş yükselişte pozisyon al" fikrinin verideki en tutarlı karşılığı BTC trend takibi (§11.6). Tarama botunu küçük tutup sermayenin çoğunu trend kuralına ayırmak önerildi; karar kullanıcıda.
