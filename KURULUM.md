@@ -197,6 +197,11 @@ screen -dmS cikis bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_
 ```bash
 screen -dmS dogrula bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2025-04-01 --bitis 2026-01-01 --kaynak backfill --mod sabit --cikis-deneyi ZAMAN15:max_bekleme_saati=1.5 ZAMAN2:max_bekleme_saati=2 ZAMAN3:max_bekleme_saati=3 --cikti /root/v184_sim_2025_zaman > sim_2025.log 2>&1"
 ```
+- Kullanıcının çıkış merdiveni (başta %2 stop, +%5'ten sonra tepeden %3, kâr kilidi yok) ve yalnız kilitsiz hali,
+  iki dönemde arka arkaya (önbellek dolu, ~30-40 dk; ANALIZ §11.8):
+```bash
+screen -dmS kademe bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2026-01-01 --bitis 2026-09-30 --kaynak backfill --mod sabit --cikis-deneyi KADEMELI:stop_min=0.02,stop_max=0.02,kar_kilidi_tetik=1,ilk_esik_min=0.05,ilk_esik_max=0.05 KILITSIZ:kar_kilidi_tetik=1 --cikti /root/v184_sim_kademe_2026 > sim_k26.log 2>&1; nice -n 10 venv/bin/python -u tools/v184_simulasyon.py --baslangic 2025-04-01 --bitis 2026-01-01 --kaynak backfill --mod sabit --cikis-deneyi KADEMELI:stop_min=0.02,stop_max=0.02,kar_kilidi_tetik=1,ilk_esik_min=0.05,ilk_esik_max=0.05 KILITSIZ:kar_kilidi_tetik=1 --cikti /root/v184_sim_kademe_2025 > sim_k25.log 2>&1"
+```
 **Alım yöntemi araştırması** (literatürdeki kuralların günlük veride testi; ~5-10 dk, az bellek):
 ```bash
 cd /root && nice -n 10 venv/bin/python -u tools/strateji_arastirma.py > strateji.log 2>&1

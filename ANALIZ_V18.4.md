@@ -742,3 +742,28 @@ Kullanıcının önerisi: bot kötü piyasada hiç alım yapmasın, yalnız iyi 
 - **Botun kendi geçmişine bakan filtreler pencereye göre işaret değiştiriyor.** 3 ve 14 gün iki dönemde aynı yönde, 7 gün iki dönemde ters. Bu düzensizlik gürültüye işaret ediyor.
 - **2025'te strateji ölçülebilen her koşulda zararda** (sinyal başı %−0.33 ile %−0.69). Sorun rejim değil, giriş yöntemi: zaten yükselmiş coin'i almak.
 - **Sonuç:** önceden bilinebilen hiçbir rejim filtresi bu stratejiyi iki dönemde de kârlı yapmıyor. "Yatayda işlem yapma, yalnız oturmuş yükselişte pozisyon al" fikrinin verideki en tutarlı karşılığı BTC trend takibi (§11.6). Tarama botunu küçük tutup sermayenin çoğunu trend kuralına ayırmak önerildi; karar kullanıcıda.
+
+### 11.8 "Yükselmiş coine girme" tasarımı ve kod (1 Ekim, yerel hesap)
+Kullanıcının tasarım niyeti: zaten yükselmiş coine girmemek, RSI'ın şişip şişmediğine bakmak, EMA'nın olumlu, hacmin gerçek olması ve yükselişin başında girmek. Kodun yaptığı (`sniper/ozellikler.py: sinyal_degerlendir`):
+- Fiyat 1 saatlik EMA20'nin üstünde olmalı.
+- ATR ≤ %3.
+- Kırılım (son 8 mumun tepesi aşıldı) ya da yutan mum.
+- RSI(14, 15m) > 55. Alt sınır var, **üst sınır yok**.
+- Son 15m hacmi 14 mumluk ortalamanın 2.5 katından büyük.
+
+Radar yalnız son 24 saatte en çok yükselen 10 pariteyi tarar. Alım anında veri:
+
+| | 2026 Oca–Eyl (1032) | 2025 Nis–Ara (1453) |
+|---|---|---|
+| RSI medyanı / RSI > 70 olan | 78 / %89 | 77 / %84 |
+| 24 saatlik yükseliş medyanı / > %10 olan | %8.5 / %44 | %11.8 / %59 |
+| RSI ≤ 70 alımlar, sinyal başı | %−0.34 | %−0.71 |
+| 24s yükselişi > %15 alımlar, sinyal başı | %−0.46 | %−0.60 |
+
+- **Düşük RSI'lı alımlar iki dönemde de daha kötü.** RSI'a üst sınır koymak çözüm değil.
+- **24 saatte %15'ten fazla yükselmiş coini almamak iki dönemde de seçimi iyileştiriyor.**
+  - 2026: kalan %+0.03, atlanan %−0.46; fark +0.49 puan [+0.02, +0.98].
+  - 2025: kalan %−0.44, atlanan %−0.60; fark +0.17 puan [−0.19, +0.53].
+  - %10 ve %20 eşikleri de aynı yönde. 20 USDT ile toplam: 2026'da −20.2 → +4.8, 2025'te −144.3 → −79.5. 2025'teki iyileşmenin bir kısmı daha az işlemden geliyor; aynı oranda rastgele atlansa sonuç −90.7 olurdu.
+- **Aday filtre (kullanıcının tasarım niyetiyle uyumlu):** 24 saatlik yükseliş ≤ %15. 2025'te kalan alımlar hâlâ zararda; filtre stratejiyi kârlı yapmıyor. Uygulanmadı, kullanıcı onayı bekliyor.
+- **Çıkış merdiveni.** Kullanıcının tarifi: başta %2 stop; +%5'ten sonra tepeden %3, +%10'da %4, +%50'de %10 geri çekilmede sat. Mevcut motor buna yakın: +%3–6 (ATR'ye göre) sonrası tepeden %3, +%10'da %5, +%20'de %10, ayrıca kısmi satış ve +%2.5'ten sonra +%1 kâr kilidi. 0.19 USDT'lik satışlar bu kilitten geliyor. Kullanıcının merdiveni (`stop_min=stop_max=0.02`, `kar_kilidi_tetik=1`, `ilk_esik_min=ilk_esik_max=0.05`) iki dönemde test edilecek (KURULUM: çıkış deneyi).
