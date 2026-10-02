@@ -836,3 +836,24 @@ def test_uctan_uca_cikis_deneyi(dunya, tmp_path):
     assert 'B_SIKI: B_V184_AI sinyalleri, çıkış: stop_min=0.004 (canlı 0.025), stop_max=0.004 (canlı 0.055)' in metin
     with pytest.raises(SystemExit):
         vs.calistir(dunya, vs.arguman_ayristirici().parse_args(['--cikis-deneyi', 'X:yok=1']), log=lambda *x: None)
+
+
+def test_bitisten_hemen_once_listelenen_coin_backfilli_dusurmez(tmp_path):
+    """Sunucuda görülen hata: coin --bitis'ten ~2 saat önce listelenmiş. Tüm serisi uzun (bugüne kadar), ama bitişe
+    kadarki kısmı 14 mumdan kısa: pandas_ta.rsi None döner ve ön filtre TypeError ile bütün backfill'i düşürürdü."""
+    n = 60 * 24 * 14
+    pompalar = list(range(60 * 24 * 6, n - 900, 397))
+    bitis_ms = T0_BF + 12 * 86_400_000
+    yeni = seri_uret(4, 60 * 24 * 2 + 120, 2.0)
+    yeni['ts'] += bitis_ms - 2 * 3_600_000 - T0_BF                     # bitişten 2 saat önce listelendi
+    borsa = TickerBorsa({'BTC/USDT': seri_uret(1, n, 60000, trend=0.00003),
+                         'AAA/USDT': seri_uret(2, n, 1.0, pompa_dk=pompalar),
+                         'YENI/USDT': yeni})
+    a = vs.arguman_ayristirici().parse_args([
+        '--baslangic', str(pd.Timestamp(T0_BF + 6 * 86_400_000, unit='ms')),
+        '--bitis', str(pd.Timestamp(bitis_ms, unit='ms')), '--kaynak', 'backfill', '--ai-model', 'yok',
+        '--onbellek', str(tmp_path / 'onb'), '--cikti', str(tmp_path / 'sim'), '--evren', '5', '--butce', '100',
+        '--mod', 'sabit'])
+    sonuc = vs.calistir(borsa, a, simdi_ms=T0_BF + 14 * 86_400_000, log=lambda *x: None)
+    assert not any('Backfill çalışmadı' in m for m in sonuc['meta']['notlar']), sonuc['meta']['notlar']
+    assert 'B_V184' in sonuc['senaryolar']

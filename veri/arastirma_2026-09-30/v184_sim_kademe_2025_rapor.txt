@@ -1,0 +1,86 @@
+V18.4 GEÇMİŞ SİMÜLASYONU | 2025-04-01 00:00 → 2026-01-01 00:00 | 2026-10-01 16:28
+Ayarlar: kayma seviye %0.15 / zaman %0.05 | max süre 96 saat | AI: core_xgboost_model.json (eşik 0.65) | API isteği: 9426
+NOT: AI modeli kartsız: eğitim dönemi bilinmiyor. Mevcut eski core model için adli analiz: ilk 68 işlem (31 May-15 Haz); bu iki haftadaki girişlerin AI skoru örneklem içi olabilir, diğer dönemler örneklem dışı.
+NOT: Piyasa taraması evreni bugünün en hacimli 250 paritesi: dönem içinde delist olan coinler yok, sonuç biraz iyimser olabilir.
+NOT: DENEY (çıkış): B_KADEMELI, B_KILITSIZ, B_GENIS5, B_UCAN senaryoları B_V184_AI ile AYNI sinyallere girer, yalnız çıkış ayarları farklıdır.
+
+4) BÜTÇE SONUÇLARI (botun kurallarıyla). ilk30g: başlangıçtan 30 gün içinde kapanan işlemlerin kârı; maxDD gerçekleşmiş nakit + açık pozisyon maliyeti üzerinden (açık pozisyonun anlık zararı hariç)
+   senaryo       bütçe mod      işlem atlanan   toplam  getiri  maxDD  ilk30g 30g medyan  30g %10  30g %90
+   B_V184          100 sabit      786    1865   -79.95  -79.9% -80.0%  -23.82      -6.04   -23.93    +0.00
+   B_V184          450 sabit     1700     951  -152.62  -33.9% -34.0%  -29.56     -14.30   -29.06    -5.90
+   B_REJIMSIZ      100 sabit      964    3120   -79.94  -79.9% -80.2%  -27.20      -6.67   -23.36    +0.00
+   B_REJIMSIZ      450 sabit     2509    1575  -224.66  -49.9% -50.1%  -36.03     -22.77   -36.61   -13.31
+   B_V184_AI       100 sabit      611     798   -80.32  -80.3% -80.4%  -27.13      -7.39   -20.82    +0.00
+   B_V184_AI       450 sabit      990     419  -118.37  -26.3% -26.4%  -26.06     -12.50   -22.10    -3.63
+   B_AI_ATR4       100 sabit      689     806   -79.83  -79.8% -79.9%  -28.16      -6.55   -21.78    -0.96
+   B_AI_ATR4       450 sabit     1038     457  -108.86  -24.2% -24.3%  -27.09      -9.68   -23.13    -3.72
+   B_AI_REJIMSIZ   100 sabit      668    1391   -79.98  -80.0% -80.1%  -28.06      -6.56   -26.91    +0.00
+   B_AI_REJIMSIZ   450 sabit     1390     669  -164.32  -36.5% -36.9%  -28.46     -18.14   -28.07    -7.23
+   B_V1802         100 sabit      817    1477   -80.42  -80.4% -80.5%  -28.96      -4.46   -28.30    +0.00
+   B_V1802         450 sabit     1541     753  -164.20  -36.5% -36.7%  -27.80     -15.88   -29.29    -7.66
+   B_KADEMELI      100 sabit      645     764   -80.18  -80.2% -80.4%  -26.03      -7.82   -16.94    +0.00
+   B_KADEMELI      450 sabit      965     444   -97.72  -21.7% -22.0%  -23.61     -10.26   -16.39    -2.83
+   B_KILITSIZ      100 sabit      567     842   -80.06  -80.1% -80.1%  -29.66      -8.10   -18.93    +0.00
+   B_KILITSIZ      450 sabit      972     437  -116.89  -26.0% -26.1%  -25.75     -12.35   -21.07    -3.78
+   B_GENIS5        100 sabit      543     866   -79.94  -79.9% -80.0%  -27.13      -5.83   -22.28    +0.00
+   B_GENIS5        450 sabit     1001     408  -139.51  -31.0% -31.1%  -31.29     -12.77   -26.48    -4.58
+   B_UCAN          100 sabit      508     901   -79.98  -80.0% -80.2%  -33.44      -7.18   -17.33    +0.00
+   B_UCAN          450 sabit      981     428  -143.16  -31.8% -32.0%  -31.82     -13.95   -27.48    -2.60
+   Süre sınırında/veri sonunda son fiyattan kapatılan pozisyon: {'B_REJIMSIZ': 1}
+
+5) PİYASA TARAMASI (backfill) — sinyal başı net getiri, bütçe kuralları olmadan (her sinyal tek başına; %95 GA gün bazlı bootstrap)
+   senaryo       sinyal     ort.  kazanan   %95 GA                 canlı kuruluma (B_V184_AI) göre fark
+   B_V184          2651   %-0.46      40%   [%-0.62, %-0.30]       %+0.05 [%-0.05, %+0.15]
+   B_REJIMSIZ      4084   %-0.44      39%   [%-0.56, %-0.32]       %+0.07 [%-0.07, %+0.20]
+   B_V184_AI       1409   %-0.51      42%   [%-0.70, %-0.30]       (taban)
+   B_AI_ATR4       1495   %-0.45      43%   [%-0.65, %-0.25]       %+0.06 [%-0.01, %+0.12]
+   B_AI_REJIMSIZ   2059   %-0.50      41%   [%-0.65, %-0.34]       %+0.01 [%-0.09, %+0.11]
+   B_V1802         2294   %-0.46      43%   [%-0.64, %-0.30]       %+0.05 [%-0.08, %+0.17]
+   B_KADEMELI      1409   %-0.39      25%   [%-0.61, %-0.17]       %+0.11 [%+0.01, %+0.22]
+   B_KILITSIZ      1409   %-0.52      35%   [%-0.74, %-0.29]       %-0.01 [%-0.09, %+0.07]
+   B_GENIS5        1409   %-0.58      48%   [%-0.85, %-0.30]       %-0.07 [%-0.20, %+0.06]
+   B_UCAN          1409   %-0.56      36%   [%-0.92, %-0.21]       %-0.05 [%-0.29, %+0.18]
+   ATR %3-4 arası sinyaller (B_AI_ATR4 ile eklenen): n=86 | ort %+0.48 [%-0.60, %+1.51] | kazanan %65
+   yatay rejim sinyalleri (B_AI_REJIMSIZ ile eklenen): n=650 | ort %-0.48 [%-0.72, %-0.26] | kazanan %39
+
+6) AY AY SONUÇ (sabit kasa: işlem başına 20 USDT, balina 40; kâr, işlemin kapandığı aya yazılır)
+   B_V184_AI: backfill, V18.4 + AI (canlıdaki kurulum); 450 USDT ile başlasaydı:
+   ay       işlem  kâr USDT  kazanan  ay sonu bakiye
+   2025-04    140    -26.06      36%          423.94
+   2025-05    139    -17.64      40%          406.30
+   2025-06     85    -11.16      41%          395.14
+   2025-07    111    -12.92      40%          382.22
+   2025-08    107     -3.53      47%          378.70
+   2025-09    102    -17.44      35%          361.26
+   2025-10    134    -15.31      43%          345.94
+   2025-11     84    -12.01      35%          333.93
+   2025-12     88     -2.30      40%          331.63
+   TOPLAM     990   -118.37      40%          331.63   (getiri -26.3%, en büyük düşüş -26.4%)
+   B_V184_AI: backfill, V18.4 + AI (canlıdaki kurulum); 100 USDT ile başlasaydı:
+   ay       işlem  kâr USDT  kazanan  ay sonu bakiye
+   2025-04    136    -27.13      35%           72.87
+   2025-05    124    -14.52      42%           58.35
+   2025-06     61     -9.07      38%           49.27
+   2025-07     80     -8.09      42%           41.18
+   2025-08     67     -1.39      48%           39.79
+   2025-09     58     -7.68      38%           32.11
+   2025-10     69     -8.11      41%           23.99
+   2025-11     16     -4.31      31%           19.68
+   2025-12      0     +0.00        -           19.68
+   TOPLAM     611    -80.32      40%           19.68   (getiri -80.3%, en büyük düşüş -80.4%)
+   Tüm senaryolar, aylık kâr (USDT; 450 USDT bütçe):
+   ay              B_V184    B_REJIMSIZ     B_V184_AI     B_AI_ATR4 B_AI_REJIMSIZ       B_V1802    B_KADEMELI    B_KILITSIZ      B_GENIS5        B_UCAN
+   2025-04         -29.56        -36.03        -26.06        -27.09        -28.46        -27.80        -23.61        -25.75        -31.29        -31.82
+   2025-05         -22.60        -33.00        -17.64        -19.71        -27.18        -30.67         -7.22        -13.08        -24.49        -24.20
+   2025-06         -11.05        -19.61        -11.16        -11.16        -13.58        -11.30        -11.03        -10.49        -15.24        -10.80
+   2025-07         -27.69        -36.16        -12.92         -7.74        -20.84         -8.04        -11.32        -11.94         -9.27        -10.47
+   2025-08          +0.37         -5.25         -3.53         -4.85         -5.14        -13.60         -2.21         -3.78         +4.73        +10.34
+   2025-09         -21.18        -30.04        -17.44        -14.63        -27.76        -20.48        -15.06        -16.21        -17.77        -19.36
+   2025-10         -14.69        -21.83        -15.31        -11.76        -20.27        -22.26        -16.81        -20.60        -20.50        -20.93
+   2025-11          -9.33        -19.26        -12.01         -9.36        -15.59        -19.99         -9.31        -12.98        -17.19        -22.73
+   2025-12         -16.89        -23.50         -2.30         -2.57         -5.50        -10.06         -1.14         -2.08         -8.48        -13.18
+   TOPLAM         -152.62       -224.66       -118.37       -108.86       -164.32       -164.20        -97.72       -116.89       -139.51       -143.16
+   işlem             1700          2509           990          1038          1390          1541           965           972          1001           981
+   maxDD           -34.0%        -50.1%        -26.4%        -24.3%        -36.9%        -36.7%        -22.0%        -26.1%        -31.1%        -32.0%
+
+Senaryolar: B_V184: backfill sinyalleri, V18.4 | B_REJIMSIZ: backfill, yatay rejim filtresi yok | B_V184_AI: backfill, V18.4 + AI (canlıdaki kurulum) | B_AI_ATR4: backfill, V18.4 + AI, ATR sınırı %4 | B_AI_REJIMSIZ: backfill, V18.4 + AI, yatay rejim filtresi yok | B_V1802: backfill, Ağustos botu (V18.0.2 giriş filtreleri + çıkışı) | B_KADEMELI: B_V184_AI sinyalleri, çıkış: stop_min=0.02 (canlı 0.025), stop_max=0.02 (canlı 0.055), kar_kilidi_tetik=1 (canlı 0.025), ilk_esik_min=0.05 (canlı 0.03), ilk_esik_max=0.05 (canlı 0.06) | B_KILITSIZ: B_V184_AI sinyalleri, çıkış: kar_kilidi_tetik=1 (canlı 0.025) | B_GENIS5: B_V184_AI sinyalleri, çıkış: stop_min=0.05 (canlı 0.025), stop_max=0.08 (canlı 0.055) | B_UCAN: B_V184_AI sinyalleri, çıkış: stop_min=0.08 (canlı 0.025), stop_max=0.1 (canlı 0.055), kar_kilidi_tetik=1 (canlı 0.025), ilk_esik_min=0.05 (canlı 0.03), ilk_esik_max=0.05 (canlı 0.06)

@@ -71,6 +71,7 @@ import pickle
 import re
 import sys
 import time
+import traceback
 from collections import Counter
 from dataclasses import dataclass, fields, replace
 from typing import Callable, Dict, List, Optional
@@ -824,6 +825,10 @@ def backfill_kaynak(depo, ex, btc: BtcBaglami, bas_ms, bit_ms, evren_n, motor: C
     sinyaller = []
     for s, df15 in seriler15.items():
         df15_sinyal = df15[df15['ts'] + MUM_15M_MS <= bit_ms].reset_index(drop=True)
+        if len(df15_sinyal) < bf.PENCERE_15M:
+            # --bitis'ten hemen önce listelenen coin: sinyal penceresi dolmaz (14 mumdan kısa seride
+            # pandas_ta.rsi None döner ve ön filtre TypeError verirdi)
+            continue
         try:
             df1h = depo.getir_df(s, '1h', veri_bas - bf.PENCERE_1H * SAAT_MS, bit_ms + SAAT_MS)
         except VeriYok:
@@ -1296,7 +1301,7 @@ def calistir(ex, a, simdi_ms=None, log=print):
                               f"sinyallere girer, yalnız çıkış ayarları farklıdır.")
             yazilacak.append((btablo, a.cikti + '_backfill.csv'))
         except Exception as e:  # noqa: BLE001 - gerçek kaynak raporu yine yazılsın
-            log(f"⚠️ Backfill çalışmadı: {type(e).__name__}: {e}")
+            log(f"⚠️ Backfill çalışmadı: {type(e).__name__}: {e}\n{traceback.format_exc()}")   # log'da tam iz
             notlar.append(f"Backfill çalışmadı: {type(e).__name__}: {e}")
 
     meta['istek'] = depo.istek

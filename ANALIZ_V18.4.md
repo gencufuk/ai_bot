@@ -768,3 +768,27 @@ Radar yalnız son 24 saatte en çok yükselen 10 pariteyi tarar. Alım anında v
 - **Aday filtre (kullanıcının tasarım niyetiyle uyumlu):** 24 saatlik yükseliş ≤ %15. 2025'te kalan alımlar hâlâ zararda; filtre stratejiyi kârlı yapmıyor. Uygulanmadı, kullanıcı onayı bekliyor.
 - **Çıkış merdiveni.** Kullanıcının tarifi: başta %2 stop; +%5'ten sonra tepeden %3, +%10'da %4, +%50'de %10 geri çekilmede sat. Mevcut motor buna yakın: +%3–6 (ATR'ye göre) sonrası tepeden %3, +%10'da %5, +%20'de %10, ayrıca kısmi satış ve +%2.5'ten sonra +%1 kâr kilidi. 0.19 USDT'lik satışlar bu kilitten geliyor. Kullanıcının merdiveni (`stop_min=stop_max=0.02`, `kar_kilidi_tetik=1`, `ilk_esik_min=ilk_esik_max=0.05`) iki dönemde test edilecek (KURULUM: çıkış deneyi).
 - **Uçan coinler** (1 Ekim). Kullanıcının ekran görüntüsünde günün en çok yükselenleri arasında NOM (+%42) ve NIGHT (+%28) var. 89'daki bot ikisini de aynı sabah aldı (08:24 NIGHT, 09:14 NOM); ikisi de ~25-30 dakikada −%3.3 stopla çıktı. Bot doğru coini bulmuş, ama coin oynaklığı içinde stop olmuş. Denenmemiş soru: daha geniş stop ile ara sıra gelen +%30-50'lik kazançlar büyüyen kayıpları karşılar mı? Aynı deneye GENIS5 (stop %5-8) ve UCAN (stop %8-10, kilit yok, kademeli takip) eklendi. Not: günün en çok yükselenlerini kapanışta alıp bir gün tutan vekil 2026 Ağustos'ta +%56, 2025-26 bütününde yıllık −%72 (§11.1).
+
+### 11.9 Satış kademeleri ve geniş stop: 2025 sonuçları (2 Ekim, 89 sunucusu)
+**2026 çalıştırması çöktü, düzeltildi.** 89'da 2026 çalıştırması "Backfill çalışmadı: TypeError: '>' not supported between instances of 'NoneType' and 'float'" ile durdu.
+- **Neden:** Coin listesi 1 Ekim'de alındı. Listede --bitis'ten (30 Eylül) hemen önce listelenen bir coin vardı. Bu coinin bütün serisi uzun olduğu için eleme filtresinden geçiyor, ama bitişe kadarki kısmı 14 mumdan kısa kalıyordu. Bu durumda `pandas_ta.rsi` None döndürüyor ve `backfill_sinyaller.on_filtre` bütün piyasa taramasını düşürüyordu.
+- **Düzeltme:** Sinyal penceresi dolmayan coin atlanıyor. Tarama yine hata verirse log'a tam iz yazılıyor.
+- **Test:** `test_bitisten_hemen_once_listelenen_coin_backfilli_dusurmez` hatayı birebir üretiyordu; düzeltmeden sonra geçiyor.
+
+**2025 Nisan–Aralık sonuçları** (89'un coin listesi, canlı kurulum 1409 sinyal; rapor `veri/arastirma_2026-09-30/v184_sim_kademe_2025_rapor.txt`):
+
+| Varyant | Ayar | Sinyal başı fark, puan [%95 GA] | 1. yarı | 2. yarı | 450 USDT | maxDD |
+|---|---|---|---|---|---|---|
+| canlı | — | taban %−0.51 | | | −118.37 | %−26.4 |
+| KADEMELI | stop sabit %2, kâr kilidi yok, ilk kademe +%5 | +0.115 [+0.006, +0.224] | +0.15 | +0.07 | −97.72 | %−22.0 |
+| KILITSIZ | yalnız kâr kilidi yok | −0.009 [−0.083, +0.068] | +0.03 | −0.05 | −116.89 | %−26.1 |
+| GENIS5 | stop %5–8 | −0.074 [−0.199, +0.056] | −0.09 | −0.05 | −139.51 | %−31.1 |
+| UCAN | stop %8–10, kilit yok, ilk kademe +%5 | −0.049 [−0.291, +0.184] | +0.03 | −0.14 | −143.16 | %−32.0 |
+
+- **KADEMELI (kullanıcının merdiveni) 2025'te en iyisi.** Ay bazında 9 ayın 7'sinde canlı kurulumdan iyi.
+  - Daha çok stop oluyor (902'ye karşı 642), ama stoplar daha küçük (%−2.15'e karşı %−2.88). Sebep: oynak coinlerde stop %5.5'e kadar açılmıyor, %2'de sabit kalıyor.
+  - Kilit olmadığı ve ilk kademe +%5'te olduğu için kazançlar büyüyor: moon bag 157 (83'e karşı), kısmi kâr ortalaması %+4.76 (%+2.58'e karşı).
+  - Kazanma oranı %25'e düşüyor (canlıda %42), ama ortalama iyileşiyor.
+- **Yalnız kilidi kaldırmak etkisiz.** İyileşme dar stop ile geç ilk kademenin birleşiminden geliyor.
+- **Geniş stop ("uçanı kaçırma") kötüleştiriyor.** Ara sıra gelen büyük kazançlar, büyüyen kayıpları karşılamıyor.
+- **2026 doğrulaması bekleniyor.** Düzeltilmiş simülatörle KADEMELI, KADEMELI + 2 saat zaman aşımı ve ZAMAN2 iki dönemde yeniden çalıştırılacak (KURULUM). Karar kuralı: iki dönemde de sinyal başı artı ve 450 USDT bütçede daha iyi.
