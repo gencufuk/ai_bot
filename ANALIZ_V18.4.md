@@ -887,3 +887,62 @@ Hiçbir kural geçmezse öneri: **gün içi al-sat botu çalıştırılmaz.** Bu
 - BOT_VEKILI canlı botun 1 saatlik vekili, kendisi değil.
 
 **Sonuçlar:** sunucu çalıştırmasından sonra §12.1'e yazılacak.
+
+### 12.1 Ek ön kayıt: trend ve yatay piyasaya ayrı yöntem (4 Ekim, sonuçlardan önce)
+**Kullanıcının sorusu:** Trend ve yatay piyasa için ayrı yöntem (ve ayrı veri) daha mantıklı değil mi?
+
+Bu ek, 212'deki ilk laboratuvar çalıştırmasının sonuçları görülmeden yazıldı. Laboratuvarın bir sonraki sürümü bunları da sınar. Karar o sürümün raporuyla verilir; ilk çalıştırmanın raporu yalnız 11 satırlık ilk kayıt (§12) içindir.
+
+**Rejim.** Her saat için, yalnız kapanmış BTC 1 saatlik mumlarıyla belirlenir:
+
+| Rejim | Koşul |
+|---|---|
+| TREND_YUKARI | BTC ADX(14, Wilder) ≥ 20 ve BTC kapanışı > EMA200 |
+| TREND_ASAGI | BTC ADX ≥ 20 ve BTC kapanışı ≤ EMA200 |
+| YATAY | BTC ADX < 20 |
+
+- Bu, botun canlıda yaptığı ayrımın 1 saatlik karşılığı: 15 dk ADX ≥ 20 ise TREND, BTC EMA200 üstündeyse ONAY.
+- ADX yön bilmez; sert bir düşüş de "TREND" sayılır. Bu yüzden yön ayrıca ayrılır.
+
+**Yeni kural YATAY_DONUS** (yatay piyasa için ortalamaya dönüş). Giriş koşullarının hepsi gerekir:
+- rejim YATAY;
+- coinin kendi ADX(14) değeri < 20 (coin de yatay);
+- kapanış Bollinger alt bandının (SMA20 − 2σ) altında;
+- RSI14 < 30;
+- 24 saatlik hacim ≥ 5M USDT.
+
+Çıkış (ORTA_BANT):
+- kapanışı SMA20'ye (orta bant) ulaşan ya da geçen ilk mumun kapanışında, giriş mumu dahil;
+- sabit stop −%3 (mum içi yol kuralıyla);
+- en fazla 24 saat.
+
+**Rejime göre geçiş (kullanıcının fikri).** Eşleme veriden değil, baştan teoriye göre seçildi. Her ikisinde de paritede tek pozisyon kuralı iki bileşen için birlikte geçerli.
+
+| Satır | TREND_YUKARI | YATAY | TREND_ASAGI |
+|---|---|---|---|
+| REJIM_KOMBO | ERKEN_BIRIKIM | YATAY_DONUS | alım yok |
+| REJIM_KOMBO_BOT | BOT_VEKILI (bugünkü botun vekili) | YATAY_DONUS | alım yok |
+
+**AI.**
+- Feature listesine BTC'nin ve coinin ADX(14) değeri eklenir; toplam 17 feature.
+- Veri tek, rejim bir feature olarak giriyor. Böylece model rejime göre farklı davranışı öğrenebilir.
+- YATAY_DONUS'un da AI sürümü var; kombolarda AI yok.
+- Bu değişiklik ilk 5 AI sürümünü de etkiler. Sonuç görülmeden yapıldığı için geçerli; bir sonraki çalıştırma esas alınır.
+
+**Rapor: yeni 8) REJİM bölümü.**
+- Her kuralın işlemleri girişteki rejime göre ayrılır: TREND_YUKARI / TREND_ASAGI / YATAY.
+- İki dönemde ayrı ayrı gösterilir: işlem sayısı, kazanma %, beklenti, %95 GA.
+- "Yatayda kaybediyor, trendde kazanıyor mu?" sorusunu kural kural cevaplar.
+- Bilgi amaçlıdır; karar kuralını değiştirmez.
+
+**Karar kuralı.**
+- Aynı 5 koşul geçerli; AI sürümleri için 6. koşul da.
+- Satır sayısı 11'den 15'e çıkıyor, P ≥ 0.99 eşiği korunuyor. İki dönem, aylık ve k=2 koşullarıyla birlikte şans eseri geçme olasılığı satır başına binde birkaç düzeyinde kalıyor.
+
+**Ayrı Excel (veri) sorusu.**
+- Botun eğitim verisinde rejim zaten bir sütun (`Rejim`, sniper/etiket_deposu.py).
+- Veriyi ayrı dosyalara bölmenin iki sakıncası var:
+  - Her model yarı veriyle kalır. Model zaten veri azlığından kapılardan geçemiyor (§11.10).
+  - İki dosyanın tutarlı tutulması gerekir. Geçmişte aynı dosyaya iki botun yazması veriyi kirletti (REZ, §11.10).
+- Doğrusu: tek dosya ve rejim sütunu. Eğitimde gerekirse filtre uygulanır ya da rejim feature olarak kullanılır.
+
