@@ -67,19 +67,56 @@ def birikim_piyasasi(n, tohum, yukselis=True, faz=0, hacim=1e6):
             hacim * vk * np.exp(rng.normal(0, 0.05, n)) / c)
 
 
+def donus_piyasasi(n, tohum, donus=True, faz=0, hacim=1e6, aralik=80):
+    """YATAY_DONUS kurulumları gömülü piyasa: yatay coin (OU gürültüsü, phi 0.8, sigma %0.1; ADX düşük), her `aralik`
+    saatte tek mumluk -%3 düşüş (Bollinger alt bandı altı, RSI14 < 30, ADX < 20). donus=True: sonraki 4 saatte eski
+    düzeye döner (ortalamaya dönüş); False: 12 saat sürüklenmesiz rastgele yürüyüş (sigma %0.5), düzey orada kalır
+    (çıkışın beklentisi yok). Hacim sabit."""
+    rng = np.random.default_rng(tohum)
+    x, duzey, c, plan = 0.0, 100.0, [], {}
+    while len(c) < n:
+        j = len(c)
+        if j >= faz + aralik and (j - faz) % aralik == 0:
+            onceki, duzey = duzey, duzey * 0.97
+            if donus:
+                plan.update({j + k: duzey + (onceki - duzey) * k / 4 for k in range(1, 5)})
+            else:
+                d = duzey
+                for k in range(1, 13):
+                    d *= np.exp(rng.normal(0, 0.005))
+                    plan[j + k] = d
+        duzey = plan.pop(j, duzey)
+        x = 0.8 * x + rng.normal(0, 0.001)
+        c.append(duzey * np.exp(x))
+    c = np.array(c[:n])
+    o = np.r_[c[0], c[:-1]]
+    return o, np.maximum(o, c) * 1.001, np.minimum(o, c) * 0.999, c, hacim * np.exp(rng.normal(0, 0.05, n)) / c
+
+
+def yatay_btc(n, tohum=0, s0=20000.0):
+    """Trendsiz BTC: sabit düzey çevresinde bağımsız gürültü (sigma %0.3): saatlerin ~%90'ı YATAY (ADX < 20)."""
+    c = s0 * (1 + np.random.default_rng(tohum).normal(0, 0.003, n))
+    o = np.r_[c[0], c[:-1]]
+    return o, np.maximum(o, c) * 1.001, np.minimum(o, c) * 0.999, c, np.full(n, 5e7) / c
+
+
 def _hepsini_hesapla(piyasa, ts):
-    """piyasa: {sembol: (O, H, L, C, V)}, ilk sembol BTC -> kesit, radar, BTC bağlamı, göstergeler, sinyaller,
-    özellikler."""
+    """piyasa: {sembol: (O, H, L, C, V)}, ilk sembol BTC -> kesit, radar, BTC bağlamı (ADX ve rejim dahil),
+    göstergeler, sinyaller (YATAY_DONUS dahil), kombo bileşen sinyalleri, özellikler."""
     semboller = list(piyasa)
     kes = [sl.kesit_sutunu(piyasa[s][3], piyasa[s][4]) for s in semboller]
     R24, V24 = np.column_stack([k[0] for k in kes]), np.column_stack([k[1] for k in kes])
     radar = sl.radar_ilk10(R24, V24)
-    btc = sl.btc_baglami(piyasa[semboller[0]][3])
+    _, bh, bl, bc, _ = piyasa[semboller[0]]
+    btc = sl.btc_baglami(bc, bh, bl)
     sonuc = {'radar': radar, 'btc': btc, 'g': {}, 's': {}, 'oz': {}}
     for j, s in enumerate(semboller):
         g = sl.gostergeler(*piyasa[s])
         sonuc['g'][s] = g
-        sonuc['s'][s] = sl.sinyaller(g, btc['ok'], radar[:, j], 5e6, 2e7)
+        sonuc['s'][s] = sl.sinyaller(g, btc['ok'], radar[:, j], 5e6, 2e7, btc['rejim'])
+        for kombo in sl.KOMBO_TREND:
+            for bilesen, (x, _) in sl.kombo_bilesenleri(kombo, sonuc['s'][s], btc['rejim']).items():
+                sonuc['s'][s][f"{kombo}:{bilesen}"] = x
         sonuc['oz'][s] = sl.ozellikler(g, btc, ts, np.arange(len(ts)))
     return sonuc
 
@@ -87,7 +124,8 @@ def _hepsini_hesapla(piyasa, ts):
 def _gelecegi_degistir(piyasa, oynaklik, t0, tohum):
     """t0'dan SONRAKİ mumlar bağımsız bir rastgele yürüyüşle değiştirilir. Fiyat düzeyi t0 kapanışı civarında kalır
     (sinyaller yine çıkabilsin) ama açılış boşluğu, mum içi biçim (renk, gövde, fitil) ve her mumun hacmi değişir:
-    gelecekteki bir mumun yalnız biçimini (ör. sonraki mumun rengini) kullanan sızıntı da görünür."""
+    gelecekteki bir mumun yalnız biçimini (ör. sonraki mumun rengini) kullanan sızıntı da görünür. Gelecekte mum da
+    silinir (t0+1, t0+2 ve saatlerin ~%3'ü; bütün alanlar NaN): bir sonraki mumun yalnız VARLIĞINA bakan sızıntı da."""
     rng = np.random.default_rng(tohum)
     yeni = {}
     for j, (s, mum) in enumerate(piyasa.items()):
@@ -96,6 +134,9 @@ def _gelecegi_degistir(piyasa, oynaklik, t0, tohum):
         f = mum[3][t0] / c2[t0] * rng.uniform(0.97, 1.03)
         yeni[s] = tuple(np.r_[x[:t0 + 1], (y * f)[t0 + 1:]] for x, y in zip(mum[:4], (o2, h2, l2, c2))) + \
             (np.r_[mum[4][:t0 + 1], (v2 / f)[t0 + 1:]],)
+        sil = np.r_[t0 + 1:t0 + 3, t0 + 3 + np.flatnonzero(rng.random(len(mum[0]) - t0 - 3) < 0.03)]
+        for x in yeni[s]:
+            x[sil[sil < len(x)]] = np.nan
     return yeni
 
 
@@ -103,8 +144,10 @@ def _gelecegi_degistir(piyasa, oynaklik, t0, tohum):
 # Gelecek bilgisi ve tanımlar
 # ------------------------------------------------------------------------------------------
 def test_gostergeler_sinyaller_ve_ozellikler_gelecegi_kullanmaz():
-    """Birçok kesme noktası t0 (her kuralın sinyal verdiği mumlar dahil): t0'dan sonrası bağımsız bir gelecekle
-    değiştirilince t0 ve öncesindeki radar, BTC bağlamı, göstergeler, sinyaller ve özellikler aynı kalmalı."""
+    """Birçok kesme noktası t0 (her kuralın ve kombo bileşeninin sinyal verdiği mumlar dahil): t0'dan sonrası bağımsız
+    bir gelecekle değiştirilince (mum silme dahil) t0 ve öncesindeki radar, BTC bağlamı (ADX, rejim), göstergeler (ADX,
+    SMA20, alt bant), sinyaller ve özellikler aynı kalmalı. Bir paritede kesme 1700'den hemen önce 3 saatlik boşluk var:
+    ADX'i yok olan saatler (boşluktan sonraki 14 saat) kesmeyi kapsar; geriden doldurma (bfill) gibi sızıntı görünür."""
     n = 2200
     ts = T0 + SAAT * np.arange(n, dtype=np.int64)
     piyasa = {'BTC/USDT': rastgele_mumlar(n, 0, 20000, 0.004, 5e7)}
@@ -112,15 +155,28 @@ def test_gostergeler_sinyaller_ve_ozellikler_gelecegi_kullanmaz():
     for i in range(13):
         piyasa[f'C{i:02d}/USDT'] = rastgele_mumlar(n, i + 1, 10.0, 0.012, 3e5 * (i + 1))
         oynaklik[f'C{i:02d}/USDT'] = (0.012, 3e5 * (i + 1))
+    piyasa['G00/USDT'] = rastgele_mumlar(n, 70, 10.0, 0.012, 2e6)
+    for x in piyasa['G00/USDT']:
+        x[1695:1698] = np.nan                                                   # kesme 1700'den 2 saat önce biten boşluk
+    oynaklik['G00/USDT'] = (0.012, 2e6)
     for i in range(2):                                                          # ERKEN_BIRIKIM kurulumları
         piyasa[f'E{i:02d}/USDT'] = birikim_piyasasi(n, 50 + i, faz=29 * i, hacim=1e7)
         oynaklik[f'E{i:02d}/USDT'] = (0.004, 1e7)
+    for i in range(2):                                                          # YATAY_DONUS kurulumları
+        piyasa[f'D{i:02d}/USDT'] = donus_piyasasi(n, 60 + i, faz=13 * i)
+        oynaklik[f'D{i:02d}/USDT'] = (0.002, 1e6)
     once = _hepsini_hesapla(piyasa, ts)
-    kesmeler = {1500}
-    for kural in ('BOT_VEKILI', 'ERKEN_BIRIKIM', 'SIKISMA_KIRILIM', 'TREND_DIP_RSI2', 'YUKSEK_ISABET'):
+    assert np.isnan(once['g']['G00/USDT']['adx14'][1695:1712]).all()           # 1700, ADX'siz saatlerin içinde
+    kesmeler = {1500, 1700}
+    kombo_anahtar = [f"{k}:{b}" for k, t in sl.KOMBO_TREND.items() for b in (t, sl.KOMBO_YATAY)]
+    for kural in ('BOT_VEKILI', 'ERKEN_BIRIKIM', 'SIKISMA_KIRILIM', 'TREND_DIP_RSI2', 'YUKSEK_ISABET', 'YATAY_DONUS',
+                  *kombo_anahtar):
         anlar = sorted({int(t) for s in piyasa for t in np.flatnonzero(once['s'][s][kural]) if 800 <= t < n - 2})
         assert anlar, kural                                                     # her kural en az bir kesmede sinyalde
         kesmeler.update(anlar[::max(1, len(anlar) // 5)][:5])
+    for ad in ('TREND_YUKARI', 'TREND_ASAGI', 'YATAY'):
+        assert (once['btc']['rejim'][800:] == ad).mean() > 0.1, ad             # üç rejim de var
+    assert np.isfinite(once['g']['D00/USDT']['adx14'][800:]).all()
     for t0 in sorted(kesmeler):
         sonra = _hepsini_hesapla(_gelecegi_degistir(piyasa, oynaklik, t0, t0), ts)
         k = t0 + 1
@@ -163,7 +219,18 @@ def test_gosterge_tanimlari_kaba_hesapla_ayni():
     assert g['ret24'][t] == pytest.approx(c[t] / c[t - 24] - 1) and g['ret6'][t] == pytest.approx(c[t] / c[t - 6] - 1)
     assert g['ort_gunluk_hacim30'][t] == pytest.approx(np.nanmean(qv[t - 719:t + 1]) * 24)
     assert g['sma5'][t] == pytest.approx(c[t - 4:t + 1].mean())
+    assert g['sma20'][t] == pytest.approx(c[t - 19:t + 1].mean())
+    assert g['bb_alt'][t] == pytest.approx(c[t - 19:t + 1].mean() - 2 * c[t - 19:t + 1].std(ddof=0))
+    assert g['bb_ust'][t] == pytest.approx(c[t - 19:t + 1].mean() + 2 * c[t - 19:t + 1].std(ddof=0))
+    assert np.isnan(g['sma20'][1000 + 19]) and np.isfinite(g['sma20'][1000 + 20])
     assert np.isnan(g['vol24'][1000 + 23]) and np.isfinite(g['vol24'][1000 + 24])  # pencere zamana göre
+    # coinin ADX'i (YATAY_DONUS koşulu) son 15 saat dolu değilse yok: boşluktan sonraki 14 saatte bayat ya da sonraki
+    # değerle doldurulmuş ADX yok, 15. saatte var
+    assert np.isfinite(g['adx14'][[399, 999]]).all()
+    assert np.isnan(g['adx14'][400:416]).all() and np.isfinite(g['adx14'][416])
+    assert np.isnan(g['adx14'][1000:1015]).all() and np.isfinite(g['adx14'][1015])
+    s = sl.sinyaller(g, np.ones(n, bool), None, 0, 0, np.full(n, 'YATAY'))
+    assert not s['YATAY_DONUS'][1000:1015].any()
     assert np.isnan(g['ret24'][1000 + 24]) and np.isnan(g['ret24'][1000])
     # EMA ve Wilder RSI: elle döngü (eksik saat öncesi bölümde)
     ema, rsi_g, rsi_l = c[0], 0.0, 0.0
@@ -488,6 +555,334 @@ def test_btc_gunluk_ve_btc_trend_histerezis():
 
 
 # ------------------------------------------------------------------------------------------
+# Rejim (ANALIZ §12.1): ADX, BTC rejimi, YATAY_DONUS, ORTA_BANT çıkışı, rejime göre geçiş (kombolar)
+# ------------------------------------------------------------------------------------------
+def _adx_dongu(H, L, C, n=14):
+    """Bağımsız düz döngü (Wilder ADX): eksik saat atlanır; önceki saat eksikse TR = H - L ve DM yok; DI'lar ATR 0 ise
+    0; DX toplam 0 ise 0; ADX yalnız son n+1 saat doluysa."""
+    out = np.full(len(C), np.nan)
+    atr = pdm = mdm = adx = onceki = None
+    son_eksik = -1
+    for i in range(len(C)):
+        if not (np.isfinite(H[i]) and np.isfinite(L[i]) and np.isfinite(C[i])):
+            onceki, son_eksik = None, i
+            continue
+        h, l, c = H[i], L[i], C[i]
+        if onceki is None:
+            tr, dm = h - l, None
+        else:
+            ph, pl, pc = onceki
+            tr = max(h - l, abs(h - pc), abs(l - pc))
+            up, dn = h - ph, pl - l
+            dm = (up if up > dn and up > 0 else 0.0, dn if dn > up and dn > 0 else 0.0)
+        atr = tr if atr is None else atr + (tr - atr) / n
+        if dm is not None:
+            pdm = dm[0] if pdm is None else pdm + (dm[0] - pdm) / n
+            mdm = dm[1] if mdm is None else mdm + (dm[1] - mdm) / n
+            pdi, mdi = (100 * pdm / atr, 100 * mdm / atr) if atr > 0 else (0.0, 0.0)
+            dx = 100 * abs(pdi - mdi) / (pdi + mdi) if pdi + mdi > 0 else 0.0
+            adx = dx if adx is None else adx + (dx - adx) / n
+            if i - son_eksik > n:
+                out[i] = adx
+        onceki = (h, l, c)
+    return out
+
+
+def test_adx_elle_dongu_ve_pandas_ta_ile_ayni():
+    """ADX iki bağımsız kaynağa karşı: (1) düz Python döngüsü, eksik saatlerle birlikte (rel 1e-9, NaN yerleri aynı);
+    (2) canlı botun kullandığı pandas_ta.adx (boşluksuz veride, 300 mumluk ısınmadan sonra fark < 0.5; başlangıç
+    tohumu farkı ısınmada söner, ölçülen fark ~1e-8). Fiyat adımına yuvarlanmış veride (DM eşitlikleri) de."""
+    import pandas_ta as ta
+    n = 2000
+    o, h, l, c, v = rastgele_mumlar(n, 3)
+    ref = ta.adx(pd.Series(h), pd.Series(l), pd.Series(c), length=14)['ADX_14'].to_numpy(dtype=float)
+    a = sl._adx(h, l, c)
+    assert np.isnan(a[:14]).all() and np.isfinite(a[14:]).all()
+    assert np.abs(a[300:] - ref[300:]).max() < 0.5
+    np.testing.assert_allclose(a, _adx_dongu(h, l, c), rtol=1e-9)
+    for x in (h, l, c):
+        x[[400, 401, 402, 1000]] = np.nan
+    a, d = sl._adx(h, l, c), _adx_dongu(h, l, c)
+    np.testing.assert_allclose(a, d, rtol=1e-9)                                 # NaN yerleri de aynı olmalı
+    assert np.isnan(a[400:417]).all() and np.isfinite(a[417])                   # son 15 saat dolu: 403..417
+    # düz fiyat (ATR 0): DI'lar 0, DX 0, ADX 0 (NaN değil); H = L = C
+    duz = np.full(50, 100.0)
+    assert (sl._adx(duz, duz, duz)[14:] == 0).all()
+    # fiyat adımına (tick) yuvarlanmış veri (gerçek borsa gibi): up == down > 0 eşitlikleri sık; tanım gereği iki DM de
+    # 0 (">" kesin). 1/128 adımı ikili sistemde tam: farklar ve eşitlikler kayan noktada da kesin
+    o, h, l, c, v = rastgele_mumlar(n, 9, 10.0, 0.002)
+    h, l, c = (np.round(x * 128) / 128 for x in (h, l, c))
+    up, dn = h[1:] - h[:-1], l[:-1] - l[1:]
+    assert ((up == dn) & (up > 0)).sum() >= 30
+    a = sl._adx(h, l, c)
+    np.testing.assert_allclose(a, _adx_dongu(h, l, c), rtol=1e-9)
+    ref = ta.adx(pd.Series(h), pd.Series(l), pd.Series(c), length=14)['ADX_14'].to_numpy(dtype=float)
+    assert np.abs(a[300:] - ref[300:]).max() < 0.5
+
+
+def test_adx_ve_rejim_gelecegi_kullanmaz_bosluktan_sonra_bayat_deger_yok():
+    """t0'dan sonrası (H/L/C) değiştirilince t0'a kadarki ADX ve rejim aynı; boşluktan hemen sonra (son 15 saat dolu
+    değilken) ADX ve rejim yok: boşluktaki sert hareketi görmeyen eski değerle rejim/sinyal üretilmez."""
+    n = 1500
+    o, h, l, c, v = rastgele_mumlar(n, 21, 20000, 0.004, 5e7)
+    once_adx, once = sl._adx(h, l, c), sl.btc_baglami(c, h, l)
+    for t0 in (300, 777, 1200, 1498):
+        o2, h2, l2, c2, _ = rastgele_mumlar(n, t0, c[t0], 0.02)
+        H, L, C = (np.r_[x[:t0 + 1], y[t0 + 1:]] for x, y in ((h, h2), (l, l2), (c, c2)))
+        sonra = sl.btc_baglami(C, H, L)
+        np.testing.assert_array_equal(sl._adx(H, L, C)[:t0 + 1], once_adx[:t0 + 1])
+        for ad in ('adx14', 'rejim', 'ok'):
+            np.testing.assert_array_equal(sonra[ad][:t0 + 1], once[ad][:t0 + 1], err_msg=f"{ad} t0={t0}")
+        if t0 < n - 20:
+            assert not np.array_equal(sonra['adx14'][t0 + 1:], once['adx14'][t0 + 1:])
+    # boşluk: 3 saat eksik, sonra %8'lik sıçrama; eski ADX boşluğu görmeden aynen sürerdi
+    h, l, c = h.copy(), l.copy(), c.copy()
+    h[1000:1003] = l[1000:1003] = c[1000:1003] = np.nan
+    c[1003:] *= 1.08
+    h[1003:] *= 1.08
+    l[1003:] *= 1.08
+    b = sl.btc_baglami(c, h, l)
+    assert np.isnan(b['adx14'][1000:1017]).all() and np.isfinite(b['adx14'][1017])   # son 15 saat: 1003..1017
+    assert (b['rejim'][1000:1017] == 'BILINMIYOR').all() and b['rejim'][1017] != 'BILINMIYOR'
+    assert np.isfinite(b['adx14'][999]) and b['rejim'][999] != 'BILINMIYOR'
+
+
+def test_rejim_etiketleri_yukari_asagi_yatay():
+    """Kurulmuş BTC serileri: istikrarlı yükseliş TREND_YUKARI, düşüş TREND_ASAGI, trendsiz gürültü YATAY (ısınmadan
+    sonra saatlerin büyük çoğunluğunda). Eşik: ADX >= 20 trend; kapanış = EMA200 TREND_ASAGI; H/L yoksa BILINMIYOR."""
+    n = 1500
+    rng = np.random.default_rng(1)
+    t = np.arange(n)
+    for yon, beklenen in ((1, 'TREND_YUKARI'), (-1, 'TREND_ASAGI')):
+        c = 20000 * np.exp(yon * 0.002 * t + rng.normal(0, 0.001, n))
+        o = np.r_[c[0], c[:-1]]
+        b = sl.btc_baglami(c, np.maximum(o, c) * 1.001, np.minimum(o, c) * 0.999)
+        assert (b['rejim'][300:] == beklenen).mean() > 0.95, yon
+    o, h, l, c, _ = yatay_btc(n)
+    b = sl.btc_baglami(c, h, l)
+    assert (b['rejim'][300:] == 'YATAY').mean() > 0.8
+    assert set(b['rejim'][300:]) <= {'YATAY', 'TREND_YUKARI', 'TREND_ASAGI'}
+    assert sl.btc_baglami(c)['rejim'].tolist() == ['BILINMIYOR'] * n            # H/L verilmedi: ADX yok
+    # tanım, sınırlarda: ADX tam 20 trenddir; kapanış tam EMA200 ise TREND_ASAGI; NaN -> BILINMIYOR
+    adx = np.array([19.999, 20.0, 20.0, 35.0, np.nan, 10.0, 10.0])
+    C = np.array([100.0, 101.0, 100.0, 99.0, 100.0, 100.0, np.nan])
+    ema = np.array([100.0, 100.0, 100.0, 100.0, 100.0, np.nan, 100.0])
+    assert sl.rejim_belirle(adx, C, ema).tolist() == ['YATAY', 'TREND_YUKARI', 'TREND_ASAGI', 'TREND_ASAGI',
+                                                       'BILINMIYOR', 'BILINMIYOR', 'BILINMIYOR']
+
+
+def test_yatay_donus_sinyal_kosullari():
+    """YATAY_DONUS: geçmiş + sonlu kapanış, BTC rejimi YATAY, coin ADX14 < 20, kapanış < alt bant, RSI14 < 30, 24s hacim
+    >= min_hacim. Her koşul tek başına bozulunca sinyal kaybolur (sınırlar dahil)."""
+    n = 1000
+    o, h, l, c, v = rastgele_mumlar(n, 4)
+    t = 900
+
+    def sinyal(**degis):
+        g = {k: np.array(x) for k, x in sl.gostergeler(o, h, l, c, v).items()}   # yazılabilir kopyalar
+        g['c'][t], g['bb_alt'][t], g['rsi14'][t], g['adx14'][t], g['vol24'][t] = 100.0, 100.5, 25.0, 15.0, 6e6
+        rejim = np.full(n, 'YATAY', dtype='<U12')
+        for ad, x in degis.items():
+            (rejim if ad == 'rejim' else g[ad])[t] = x
+        s = sl.sinyaller(g, np.ones(n, bool), None, 5e6, 2e7, rejim)
+        return bool(s['YATAY_DONUS'][t])
+    assert sinyal()
+    assert sinyal(adx14=19.99) and sinyal(vol24=5e6) and sinyal(rsi14=29.99) and sinyal(c=100.49)
+    for degis in ({'rejim': 'TREND_YUKARI'}, {'rejim': 'TREND_ASAGI'}, {'rejim': 'BILINMIYOR'}, {'adx14': 20.0},
+                  {'adx14': np.nan}, {'c': 100.5}, {'c': np.nan}, {'bb_alt': np.nan}, {'rsi14': 30.0},
+                  {'rsi14': np.nan}, {'vol24': 5e6 - 1}, {'vol24': np.nan}, {'gecmis': False}):
+        assert not sinyal(**degis), degis
+    g = sl.gostergeler(o, h, l, c, v)
+    assert 'YATAY_DONUS' not in sl.sinyaller(g, np.ones(n, bool), None, 5e6, 2e7)   # rejim yok: kural yok
+
+
+def test_orta_bant_cikisi_elle():
+    """ORTA_BANT: kapanış >= SMA20 olan ilk mumun kapanışında (giriş mumu dahil, eşitlik dahil); stop giriş -%3 mum içi
+    yol kuralıyla (stop, kapanıştaki sinyalden önce), boşluklu açılış açılıştan dolar; SMA20 yoksa o mumda sinyal yok;
+    en çok 24 saat (son mum eksikse sonraki açılış)."""
+    nan = float('nan')
+    O, H, L, C = _yol([(100, 101.2, 99.5, 101)])
+    b, giris, cikis, tip = sl.cikis_simule('ORTA_BANT', O, H, L, C, [101.0], 0, 1.0)  # eşitlik: çıkar
+    assert (b, tip) == (0, 'SINYAL') and cikis == pytest.approx(101 * (1 - SLIP_Z)) and giris == pytest.approx(100.05)
+    assert sl.cikis_simule('ORTA_BANT', O, H, L, C, [101.0001], 0, 1.0) is None       # altında: çıkmaz
+    O, H, L, C = _yol([(100, 100.5, 99, 99.5), (99.5, 101, 99, 100.8), (100.8, 101.5, 100.5, 101.2)])
+    S = [100.0, nan, 101.0]                                                     # 1. mumda SMA20 yok
+    assert sl.cikis_simule('ORTA_BANT', O, H, L, C, S, 0, 1.0)[0::3] == (2, 'SINYAL')
+    for mum in ((100, 102, 96.9, 101.5), (100, 102, 96.9, 99)):                 # yeşil ve kırmızı: önce stop
+        _, giris, cikis, tip = sl.cikis_simule('ORTA_BANT', *_yol([mum]), [99.0], 0, 1.0)
+        assert tip == 'STOP' and cikis == pytest.approx(giris * 0.97 * (1 - SLIP_S))
+    O, H, L, C = _yol([(100, 100, 97.2, 97.3)])                                 # -%2.7: KADEMELI'de stop olurdu
+    assert sl.cikis_simule('ORTA_BANT', O, H, L, C, [99.0], 0, 1.0) is None
+    O, H, L, C = _yol([(100, 100.2, 99.8, 99.9), (96, 96.5, 95.5, 96.2)])         # stopun altında açılış
+    assert sl.cikis_simule('ORTA_BANT', O, H, L, C, [101.0] * 2, 0, 2.0)[2:] == (pytest.approx(96 * (1 - 2 * SLIP_S)),
+                                                                                'STOP')
+    O, H, L, C = _yol([(100, 100.5, 99.5, 100)] * 25)
+    assert sl.cikis_simule('ORTA_BANT', O, H, L, C, [101.0] * 25, 0, 1.0)[0::3] == (23, 'ZAMAN')
+    assert sl.cikis_simule('ORTA_BANT', *_yol([(100, 100.5, 99.5, 100)] * 23), [101.0] * 23, 0, 1.0) is None
+    O, H, L, C = _yol([(100, 100.5, 99.5, 100)] * 23 + [(nan,) * 4, (99, 99.5, 96, 98.5)])
+    b, _, cikis, tip = sl.cikis_simule('ORTA_BANT', O, H, L, C, [101.0] * 25, 0, 1.0)
+    assert (b, tip) == (24, 'ZAMAN') and cikis == pytest.approx(99 * (1 - SLIP_Z))   # süre doldu: stop işlemez
+    O, H, L, C = _yol([(100, 100.5, 99.5, 100)] * 24)                           # son mumda sinyal de varsa SINYAL
+    assert sl.cikis_simule('ORTA_BANT', O, H, L, C, [101.0] * 23 + [100.0], 0, 1.0)[0::3] == (23, 'SINYAL')
+    # RSI2_CIKIS değişmedi: eşitlikte çıkmaz (kesin büyük)
+    assert sl.cikis_simule('RSI2_CIKIS', *_yol([(100, 101.2, 99.5, 101)]), [101.0], 0, 1.0) is None
+
+
+def test_orta_bant_maliyet_k_ile_birebir():
+    """k=0.5/1/2: giriş O(1 + SLIP_GIRIS k), stop giriş(k) x 0.97 x (1 - SLIP_SEVIYE k), sinyal çıkışı kapanış x
+    (1 - SLIP_ZAMAN k); getiri komisyon k ile. Seviyeler giriş dolumuna bağlı."""
+    O, H, L, C = _yol([(1.0, 1.0, 1.0, 1.0), (100, 100.5, 96.0, 96.5)])
+    satirlar, acik = sl.kural_islemleri(np.array([True, False]), 'ORTA_BANT', O, H, L, C, [99.0, 99.0])
+    assert acik == 0 and satirlar[0][:3] == (0, 1, 1) and satirlar[0][5] == 'STOP'
+    for k, r in zip(sl.K_LISTESI, satirlar[0][6:]):
+        giris = 100 * (1 + SLIP_G * k)
+        assert r == pytest.approx(sl.net_getiri(giris, giris * 0.97 * (1 - SLIP_S * k), k), abs=1e-12)
+    O, H, L, C = _yol([(1.0, 1.0, 1.0, 1.0), (100, 101, 99.5, 100.6)])
+    satirlar, _ = sl.kural_islemleri(np.array([True, False]), 'ORTA_BANT', O, H, L, C, [99.0, 100.6])
+    assert satirlar[0][5] == 'SINYAL'
+    for k, r in zip(sl.K_LISTESI, satirlar[0][6:]):
+        assert r == pytest.approx(sl.net_getiri(100 * (1 + SLIP_G * k), 100.6 * (1 - SLIP_Z * k), k), abs=1e-12)
+
+
+def _kombo_mumlari(n=80):
+    """Düz mumlar (100); 10. ve 40. mumlarda dip 97 (KADEMELI stopu -%2 vurulur, ORTA_BANT -%3 vurulmaz)."""
+    mumlar = [(100, 100.2, 99.9, 100)] * n
+    for b in (10, 40):
+        mumlar[b] = (100, 100.1, 97.4, 97.6)
+    mumlar[11] = mumlar[41] = (97.6, 100.1, 97.5, 100)
+    return _yol(mumlar)
+
+
+def test_kombo_tek_pozisyon_iki_bilesen_icin_ve_cikis_bilesene_gore():
+    """Trend bileşeni t=5'te girer (KADEMELI); açıkken (t=7) ve çıkış mumunda (t=10) gelen YATAY_DONUS sinyali alınmaz;
+    t=11'deki alınır (ORTA_BANT) ve açıkken gelen trend sinyali (t=13) alınmaz. Aynı -%2.6'lık dip trend işlemini
+    (KADEMELI -%2) durdurur, yatay işlemi (ORTA_BANT -%3) durdurmaz. Aynı mumda iki sinyal: trend bileşeni."""
+    O, H, L, C = _kombo_mumlari()
+    n = len(O)
+    S = [100.1] * n
+    S[16] = S[70] = 99.9                                                        # 16. ve 70. mum: kapanış >= SMA20
+    trend, yatay = np.zeros(n, bool), np.zeros(n, bool)
+    trend[[5, 13, 30, 60]] = True
+    yatay[[7, 10, 11, 36, 60]] = True
+    bilesen = {'ERKEN_BIRIKIM': (trend, 'KADEMELI'), 'YATAY_DONUS': (yatay, 'ORTA_BANT')}
+    satirlar, acik = sl.kombo_islemleri(bilesen, O, H, L, C, {'ORTA_BANT': S}, son_e={'KADEMELI': n - 1,
+                                                                                        'ORTA_BANT': n - 1})
+    assert [(x[0], x[2], x[5], x[9]) for x in satirlar] == [
+        (5, 10, 'STOP', 'ERKEN_BIRIKIM'), (11, 16, 'SINYAL', 'YATAY_DONUS'), (30, 40, 'STOP', 'ERKEN_BIRIKIM')]
+    assert acik == 1                    # t=60'ta ikisi birden: trend (KADEMELI) alınır, veri sonuna dek açık kalır
+    yatay_once = {'YATAY_DONUS': (yatay, 'ORTA_BANT'), 'ERKEN_BIRIKIM': (trend, 'KADEMELI')}
+    satirlar, acik = sl.kombo_islemleri(yatay_once, O, H, L, C, {'ORTA_BANT': S})
+    assert satirlar[-1][0::9] == (60, 'YATAY_DONUS') and satirlar[-1][2] == 70 and acik == 0   # öncelik sırası
+    assert satirlar[0][4] == pytest.approx(100 * (1 + SLIP_G) * 0.98 * (1 - SLIP_S))
+    # tersi: yatay işlem açıkken gelen trend sinyali alınmaz; 10. mumdaki dip yatay işlemi durdurmaz
+    trend[:], yatay[:] = False, False
+    yatay[[3, 50]], trend[[8, 12, 51]] = True, True
+    S = [100.1] * n
+    S[12] = 99.9
+    satirlar, _ = sl.kombo_islemleri(bilesen, O, H, L, C, {'ORTA_BANT': S})
+    assert [(x[0], x[2], x[5], x[9]) for x in satirlar] == [(3, 12, 'SINYAL', 'YATAY_DONUS'),
+                                                            (50, 74, 'ZAMAN', 'YATAY_DONUS')]
+    # veri sonu kuralı bileşenin çıkış tipine göre: KADEMELI'nin 168 saati sığmaz, ORTA_BANT'ın 24 saati sığar
+    trend[:], yatay[:] = False, False
+    trend[20], yatay[45] = True, True
+    satirlar, _ = sl.kombo_islemleri(bilesen, O, H, L, C, {'ORTA_BANT': S},
+                                     son_e={'KADEMELI': n - 168, 'ORTA_BANT': n - 24})
+    assert [(x[0], x[9]) for x in satirlar] == [(45, 'YATAY_DONUS')]
+
+
+def test_kombo_ayrik_bilesenler_birlesimi_ve_k_degerleri():
+    """Bileşen işlemleri hiç çakışmıyorsa kombo dizisi, iki bileşenin tek başına işlem dizilerinin birleşimidir (k=0.5/2
+    getirileri dahil birebir)."""
+    n = 3000
+    o, h, l, c, v = rastgele_mumlar(n, 8, 10.0, 0.01)
+    S = pd.Series(c).rolling(20, min_periods=20).mean().to_numpy()
+    trend, yatay = np.zeros(n, bool), np.zeros(n, bool)
+    trend[np.arange(100, n - 200, 400)] = True                                  # KADEMELI en çok 168 saat
+    yatay[np.arange(300, n - 200, 400)] = True
+    bilesen = {'BOT_VEKILI': (trend, 'KADEMELI'), 'YATAY_DONUS': (yatay, 'ORTA_BANT')}
+    kombo, _ = sl.kombo_islemleri(bilesen, o, h, l, c, {'ORTA_BANT': S, 'RSI2_CIKIS': S * 0})
+    a, _ = sl.kural_islemleri(trend, 'KADEMELI', o, h, l, c, None)
+    b, _ = sl.kural_islemleri(yatay, 'ORTA_BANT', o, h, l, c, S)
+    beklenen = sorted([x + ('BOT_VEKILI',) for x in a] + [x + ('YATAY_DONUS',) for x in b])
+    assert len(kombo) == trend.sum() + yatay.sum() and kombo == beklenen
+    assert {x[5] for x in b} >= {'SINYAL'} and {x[5] for x in a} & {'STOP', 'IZ_STOP'}
+
+
+def test_parite_islemleri_kombo_rejim_bilesen_ve_veri_sonu(monkeypatch):
+    """parite_islemleri (sinyaller elle verilir): kombo, trend bileşenini yalnız TREND_YUKARI saatlerinde, YATAY_DONUS'u
+    yalnız YATAY saatlerinde alır; TREND_ASAGI ve BILINMIYOR saatlerinde iki bileşen de alım yapmaz. Bileşen kuralları
+    istenmese de kombo hesaplanır. 'rejim' karar mumundaki rejim, 'bilesen' işlemin bileşeni. Veri sonu kuralı
+    bileşenin çıkış tipine göre (KADEMELI 168, ORTA_BANT 24 saat); analiz sonundan sonra kombo girişi de yok."""
+    n = 2400
+    o, h, l, c, v = rastgele_mumlar(n, 12, 10.0, 0.01, 2e6)
+    ts = T0 + SAAT * np.arange(n, dtype=np.int64)
+    rejim = np.array(['TREND_YUKARI', 'YATAY', 'TREND_ASAGI', 'BILINMIYOR'] * (n // 400 + 1),
+                     dtype='<U12').repeat(100)[:n]                              # 100 saatlik bloklar
+    btc = sl.btc_baglami(np.linspace(100, 200, n))
+    btc['rejim'], btc['adx14'] = rejim, np.full(n, 25.0)
+    erken, bot, yatay = np.zeros(n, bool), np.zeros(n, bool), np.zeros(n, bool)
+    for blok in range(n // 100):
+        erken[blok * 100 + 10] = True                                           # her blokta (her rejimde)
+        bot[blok * 100 + 20] = True
+        yatay[blok * 100 + 60] = True                                           # gerçek kural yalnız YATAY'da verir
+    yatay[n - 40] = True                                                        # son blok BILINMIYOR: yine alınmaz
+    rejim[n - 30] = 'YATAY'
+    yatay[n - 30] = True                                                        # ORTA_BANT 24 saati sığar
+    rejim[n - 100:n - 60], erken[n - 90], bot[n - 90] = 'TREND_YUKARI', True, True   # KADEMELI 168 saati sığmaz
+    o_sin = sl.sinyaller
+
+    def sinyaller(g, btc_ok, radar, min_hacim, buyuk_hacim, rejim_=None):
+        s = o_sin(g, btc_ok, radar, min_hacim, buyuk_hacim, rejim_)
+        s.update(ERKEN_BIRIKIM=erken, BOT_VEKILI=bot, YATAY_DONUS=yatay)
+        return s
+    monkeypatch.setattr(sl, 'sinyaller', sinyaller)
+    tablolar, acik = sl.parite_islemleri('A/USDT', o, h, l, c, v, ts, btc, np.ones(n, bool),
+                                         ['REJIM_KOMBO', 'REJIM_KOMBO_BOT', 'ERKEN_BIRIKIM'], 0, 0, 800)
+    df = pd.concat(tablolar, ignore_index=True)
+    karar = ((df['giris_ts'] - SAAT - T0) // SAAT).to_numpy()                   # karar mumu t
+    assert (df['rejim'].to_numpy() == rejim[karar]).all()
+    for kombo, trend_ad, trend in (('REJIM_KOMBO', 'ERKEN_BIRIKIM', erken), ('REJIM_KOMBO_BOT', 'BOT_VEKILI', bot)):
+        k = df[df['kural'] == kombo]
+        kt = karar[(df['kural'] == kombo).to_numpy()]
+        assert set(k['bilesen']) == {trend_ad, 'YATAY_DONUS'}
+        assert (k['rejim'][k['bilesen'] == trend_ad] == 'TREND_YUKARI').all()
+        assert (k['rejim'][k['bilesen'] == 'YATAY_DONUS'] == 'YATAY').all()
+        assert set(k['cikis_tipi'][k['bilesen'] == 'YATAY_DONUS']) <= {'SINYAL', 'STOP', 'ZAMAN'}
+        beklenen = sorted(t for t in np.flatnonzero((trend & (rejim == 'TREND_YUKARI')) | (yatay & (rejim == 'YATAY')))
+                          if 800 <= t + 1 and t + 1 <= n - (168 if trend[t] else 24))
+        assert sorted(kt.tolist()) == beklenen                                  # ayrık: bileşen sinyallerinin hepsi
+        assert n - 30 in kt and n - 90 not in kt
+    e = df[df['kural'] == 'ERKEN_BIRIKIM']
+    assert set(e['bilesen']) == {'ERKEN_BIRIKIM'} and set(e['rejim']) == {'TREND_YUKARI', 'YATAY', 'TREND_ASAGI',
+                                                                          'BILINMIYOR'}
+    assert set(acik) == {'REJIM_KOMBO', 'REJIM_KOMBO_BOT', 'ERKEN_BIRIKIM'}
+    # YATAY bileşeni ORTA_BANT ile SMA20'ye göre kapanır: tek başına hesaplanan dizinin aynısı (çakışma yok)
+    sma20 = pd.Series(c).rolling(20, min_periods=20).mean().to_numpy()
+    y1, _ = sl.kural_islemleri(yatay & (rejim == 'YATAY'), 'ORTA_BANT', o, h, l, c, sma20, ilk_e=800, son_e=n - 24)
+    k = df[(df['kural'] == 'REJIM_KOMBO') & (df['bilesen'] == 'YATAY_DONUS')]
+    assert k['cikis_tipi'].tolist() == [x[5] for x in y1] and 'SINYAL' in k['cikis_tipi'].tolist()
+    np.testing.assert_allclose(k[['getiri_k05', 'getiri_k1', 'getiri_k2']].to_numpy(), [x[6:9] for x in y1])
+    assert (k['sure_saat'] <= 24).all()
+    # analiz sonu (analiz_sonu_i) kombolarda da: ondan sonra giriş yok. Yalnız veri sonu (ORTA_BANT 24 saat) t=2160 ve
+    # t=2370'teki YATAY_DONUS girişlerine izin verir (sınırsız çağrıda var); önceki işlemler aynen kalır
+    son_i = n - 250
+    kombo_mu = df['kural'].isin(list(sl.KOMBO_TREND)).to_numpy()
+    giris_i = ((df['giris_ts'] - T0) // SAAT).to_numpy()
+    assert {2161, 2371} <= set(giris_i[kombo_mu & (giris_i >= son_i)].tolist())
+    tablolar, _ = sl.parite_islemleri('A/USDT', o, h, l, c, v, ts, btc, np.ones(n, bool),
+                                      ['REJIM_KOMBO', 'REJIM_KOMBO_BOT'], 0, 0, 800, son_i)
+    d2 = pd.concat(tablolar, ignore_index=True)
+    assert len(d2) and (((d2['giris_ts'] - T0) // SAAT) < son_i).all()
+    pd.testing.assert_frame_equal(d2, df[kombo_mu & (giris_i < son_i)].reset_index(drop=True))
+    # rejim yoksa (BTC bağlamında 'rejim' anahtarı yok) kombo ve YATAY_DONUS hesaplanmaz
+    monkeypatch.undo()
+    del btc['rejim']
+    tablolar, acik = sl.parite_islemleri('A/USDT', o, h, l, c, v, ts, btc, None, ['REJIM_KOMBO', 'YATAY_DONUS'],
+                                         0, 0, 800)
+    assert tablolar == [] and acik == {}
+
+
+# ------------------------------------------------------------------------------------------
 # İleri yürüyen AI
 # ------------------------------------------------------------------------------------------
 class CasusModel:
@@ -636,6 +1031,20 @@ def test_gun_bootstrap_naif_dongu_ile_ayni():
     assert o['ga95_pct'] == pytest.approx([np.percentile(ist, 2.5) * 100, np.percentile(ist, 97.5) * 100], rel=1e-9)
     assert o['p_pozitif'] == (ist > 0).mean()
     assert sl.gun_bootstrap(np.zeros(10), T0 + GUN * np.arange(10))['p_pozitif'] == 0.0   # 0 pozitif değil
+
+
+def test_bootstrap_parca_boyundan_bagimsiz(monkeypatch):
+    """Bootstrap çekilişleri bellek için parça parça (BOOTSTRAP_PARCA öğe) yapılır. PCG64 akışı parçalamadan
+    bağımsız: sonuç parça boyundan bağımsız, tek seferde çekilenle birebir aynı (gün bootstrap'ı ve AI karşılaştırması)."""
+    rng = np.random.default_rng(8)
+    giris = T0 + GUN * rng.integers(0, 300, 900) + SAAT * rng.integers(0, 24, 900)
+    r = rng.normal(0.001, 0.01, 900)
+    df = pd.DataFrame({'giris_ts': giris, 'getiri_k1': r, 'ai_secildi': rng.random(900) < 0.4})
+    ref_b, ref_k = sl.gun_bootstrap(r, giris), sl.ai_karsilastir(df)
+    assert sl.BOOTSTRAP_PARCA // 300 < sl.BOOTSTRAP_N                           # varsayılan da parçalı çeker
+    for parca in (1, 299, 1000, 10 ** 9):
+        monkeypatch.setattr(sl, 'BOOTSTRAP_PARCA', parca)
+        assert sl.gun_bootstrap(r, giris) == ref_b and sl.ai_karsilastir(df) == ref_k, parca
 
 
 def test_ai_karsilastir_ayni_gunler_naif_dongu_ile_ayni():
@@ -792,6 +1201,30 @@ def test_rapor_gosterimi_karar_kuraliyla_celismez():
     assert an['sonuclar']['ERKEN_BIRIKIM']['kurulus']['pf_sonsuz'] and not s['pf_sonsuz']
 
 
+def test_islemleri_yaz_parcali_ayni_csv(tmp_path, monkeypatch):
+    """İşlem CSV'si parça parça yazılır (tablonun biçimlenmiş tam kopyası bellekte tutulmaz): çıktı tek seferde yazılanla
+    bayt bayt aynı (başlık bir kez; zamanlar vs._tarih ile 'YYYY-MM-DD HH:MM' UTC); işlem yoksa yalnız başlık."""
+    rng = np.random.default_rng(5)
+    n = 23
+    df = pd.DataFrame({k: rng.normal(0, 1, n) for k in sl.CSV_SUTUNLAR})
+    df['kural'], df['sembol'], df['cikis_tipi'] = 'REJIM_KOMBO', 'A/USDT', 'SINYAL'
+    df['bilesen'] = rng.choice(['ERKEN_BIRIKIM', 'YATAY_DONUS'], n)
+    df['rejim'] = rng.choice(list(sl.REJIMLER) + [sl.REJIM_YOK], n)
+    df['giris_ts'] = T0 + SAAT * rng.integers(0, 40000, n)
+    df['cikis_ts'] = df['giris_ts'] + SAAT * rng.integers(1, 168, n)
+    df['ai_secildi'] = rng.random(n) < 0.5
+    df.loc[[3, 9], 'adx14'] = np.nan
+    tek = df[sl.CSV_SUTUNLAR].copy()
+    for kol in ('giris_ts', 'cikis_ts'):
+        tek[kol] = [sl.vs._tarih(x) for x in df[kol].to_numpy()]
+    tek.to_csv(tmp_path / 'tek.csv', index=False)
+    monkeypatch.setattr(sl, 'CSV_PARCA', 7)                                    # 23 satır: 4 parça
+    sl.islemleri_yaz(df, str(tmp_path / 'parca.csv'))
+    assert (tmp_path / 'parca.csv').read_bytes() == (tmp_path / 'tek.csv').read_bytes()
+    sl.islemleri_yaz(df.iloc[:0], str(tmp_path / 'bos.csv'))
+    assert (tmp_path / 'bos.csv').read_text(encoding='utf-8').splitlines() == [','.join(sl.CSV_SUTUNLAR)]
+
+
 def test_arguman_dogrulama():
     ap = sl.arguman_ayristirici()
     for arg in (['--islem', '0'], ['--islem', '-5'], ['--butce', '450', '-1'], ['--butce', '0'], ['--evren', '-3']):
@@ -901,7 +1334,8 @@ def test_uctan_uca_rastgele_piyasa_hicbir_kural_gecmez(tmp_path):
     assert meta['verisiz'] == 2 and {'YOK/USDT', 'BOS/USDT'} <= ex.istenen
     # veri sonu: girişler analiz sonundan önce ve azami tutma süresi veride (sonucuna göre seçilmiş işlem yok)
     assert meta['bitis'].startswith('2023-10-01') and meta['veri_sonu'] == sl.vs._tarih(SIMDI)
-    azami = isl['kural'].map(lambda k: sl.AZAMI_TUTMA.get(sl.KURAL_CIKIS[k], 0)).to_numpy()
+    azami = isl['bilesen'].map(lambda k: sl.AZAMI_TUTMA.get(sl.KURAL_CIKIS[k], 0)).to_numpy()   # komboda: bileşen
+    assert (azami[(isl['kural'] != 'BTC_TREND').to_numpy()] > 0).all()
     cift = (isl['kural'] != 'BTC_TREND').to_numpy()
     assert (isl['giris_ts'] < VERI_BIT).all()
     assert (isl['giris_ts'].to_numpy()[cift] + azami[cift] * SAAT <= SIMDI).all()
@@ -914,22 +1348,68 @@ def test_uctan_uca_rastgele_piyasa_hicbir_kural_gecmez(tmp_path):
     b = isl[isl['sembol'] == 'BOSLUK/USDT']
     assert len(b) and not ((b['giris_ts'] >= gb) & (b['giris_ts'] < gs)).any()
     assert (isl['giris_ts'] >= vs_ms('2023-01-01')).all() and (isl['cikis_ts'] <= vs_ms('2023-10-01')).all()
-    assert set(isl['kural']) >= {'BOT_VEKILI', 'TREND_DIP_RSI2'}
-    # rastgele yürüyüşte hiçbir satır geçmez
-    assert set(an['karar']) == set(sl.KURALLAR) | {k + '+AI' for k in sl.AI_KURALLARI}
+    assert set(isl['kural']) >= {'BOT_VEKILI', 'TREND_DIP_RSI2', 'YATAY_DONUS', 'REJIM_KOMBO_BOT'}
+    # rastgele yürüyüşte hiçbir satır geçmez (15 satır: 9 kural + 6 AI varyantı)
+    assert set(an['karar']) == set(sl.KURALLAR) | {k + '+AI' for k in sl.AI_KURALLARI} and len(an['karar']) == 15
     assert all(k['sonuc'] == 'KALDI' for k in an['karar'].values())
     assert any(x['model'] for x in sonuc['ai_aylar']['TREND_DIP_RSI2'])
+    assert set(sonuc['ai_aylar']) == set(sl.AI_KURALLARI)                      # kombolarda ve BTC_TREND'de AI yok
+    # rejim ve bileşen: karar mumundaki BTC rejimi; kombo dışında bileşen = kural
+    g0 = ((vs_ms('2023-01-01') - sl.ISINMA_GUN * GUN) // SAAT) * SAAT
+    cift = isl[isl['kural'] != 'BTC_TREND']
+    assert (cift['rejim'].to_numpy() == sonuc['btc']['rejim'][(cift['giris_ts'].to_numpy() - SAAT - g0) // SAAT]).all()
+    tek = ~isl['kural'].isin(list(sl.KOMBO_TREND))
+    assert (isl.loc[tek, 'bilesen'] == isl.loc[tek, 'kural']).all()
+    assert set(isl.loc[isl['kural'] == 'REJIM_KOMBO_BOT', 'bilesen']) <= {'BOT_VEKILI', 'YATAY_DONUS'}
+    assert (isl.loc[(isl['bilesen'] == 'YATAY_DONUS'), 'rejim'] == 'YATAY').all()
+    assert (isl.loc[isl['kural'].isin(list(sl.KOMBO_TREND)) & (isl['bilesen'] != 'YATAY_DONUS'), 'rejim']
+            == 'TREND_YUKARI').all()
     metin = (tmp_path / 'lab_rapor.txt').read_text(encoding='utf-8')
     for bolum in ('0) KARAR KURALI', '1) KURALLAR', '2) YIL YIL', '3) MALİYET', '4) BÜTÇE', '5) AYLIK', '6) AI',
-                  '7) KARAR', 'Bilinen sınırlar'):
+                  '7) KARAR', '8) REJİM', 'Saatlerin rejim dağılımı', 'Bilinen sınırlar'):
         assert bolum in metin, bolum
-    assert sl.KARAR_KURALI in metin
+    assert sl.KARAR_KURALI in metin and '(15 satır sınandığı için katı)' in sl.KARAR_KURALI
+    satirlar = metin.splitlines()
+    lejant = satirlar[next(i for i, x in enumerate(satirlar) if x.startswith('5) AYLIK')) + 1]  # kısaltmalar açık
+    assert lejant.startswith('   Sütunlar: BOT=BOT_VEKILI, ') and 'YATAY=YATAY_DONUS' in lejant
+    assert 'YATAY sütunu YATAY_DONUS kuralıdır, BTC rejimi değil' in lejant
+    i7, i8 = satirlar.index('7) KARAR (önceden kayıtlı kural; ayrıntı 0. bölümde)'), \
+        next(i for i, x in enumerate(satirlar) if x.startswith('8) REJİM'))
+    karar = [x for x in satirlar[i7 + 1:i8] if x.strip() and not x.strip().startswith('SONUÇ')]
+    assert len(karar) == 15 and 'SONUÇ: 15 satırdan 0 tanesi GEÇTİ.' in metin
+    bolum8 = satirlar[i8:satirlar.index('', i8)]
+    for kural in sl.KURALLAR:                                                   # AI'sız her satır, iki dönem, üç rejim
+        for donem in ('kuruluş', 'sınama'):
+            for rejim in sl.REJIMLER:
+                bas = f"   {kural:19s} {donem:8s} {rejim:12s}"
+                assert any(x.startswith(bas) for x in bolum8), (kural, donem, rejim)
+    assert not any('+AI' in x for x in bolum8)
     rapor = json.loads((tmp_path / 'lab_rapor.json').read_text(encoding='utf-8'))
     assert rapor['meta']['parite'] == 12 and set(rapor['karar']) == set(an['karar'])
+    assert set(rapor['rejim']) == set(sl.KURALLAR) and set(rapor['rejim_dagilim']) == {'kurulus', 'sinama'}
+    for kural in sl.KURALLAR:                                                   # rejimlere bölünen = dönemin tamamı
+        for d in ('kurulus', 'sinama'):
+            assert sum(o['n'] for o in rapor['rejim'][kural][d].values()) == an['sonuclar'][kural][d]['n'], (kural, d)
+    dag = rapor['rejim_dagilim']                                                # giriş penceresinin saatleri
+    assert (dag['kurulus']['saat'], dag['sinama']['saat']) == (181 * 24, 92 * 24)
+    i0, i1 = (int((vs_ms(x) - g0) // SAAT) for x in ('2023-07-01', '2023-10-01'))
+    for r in sl.REJIMLER:
+        assert dag['sinama'][r] == pytest.approx((sonuc['btc']['rejim'][i0:i1] == r).mean() * 100)
+    assert sum(dag['sinama'][r] for r in sl.REJIMLER) == pytest.approx(100)
+    assert set(rapor['meta']['ozellikler']) == set(sl.OZELLIKLER) and len(sl.OZELLIKLER) == 17
     csv = pd.read_csv(tmp_path / 'lab_islemler.csv')
     assert list(csv.columns) == sl.CSV_SUTUNLAR and len(csv) == len(isl)
+    assert {'rejim', 'bilesen'} <= set(csv.columns) and set(csv['rejim']) <= set(sl.REJIMLER) | {'BILINMIYOR'}
+    assert (csv['bilesen'].to_numpy() == isl['bilesen'].to_numpy()).all()
     ai = csv[csv['kural'] == 'TREND_DIP_RSI2']
     assert (ai['ai_secildi'] == (ai['ai_skor'] >= ai['ai_esik'])).all()
+    # yalnız REJIM_KOMBO_BOT istenince de bileşen sinyalleri (BOT_VEKILI radarı dahil) hesaplanır: aynı işlemler
+    kb = sl.calistir(SaatlikBorsa(veri, tickers), _arguman(tmp_path, '--ayrim', '2023-07-01', '--ai-yok', '--kurallar',
+                                                           'REJIM_KOMBO_BOT', '--cikti', str(tmp_path / 'kb')),
+                     simdi_ms=SIMDI, log=lambda *x: None)['islemler']
+    once = isl[isl['kural'] == 'REJIM_KOMBO_BOT'].reset_index(drop=True)
+    assert 'BOT_VEKILI' in set(once['bilesen'])
+    pd.testing.assert_frame_equal(kb[sl.CSV_SUTUNLAR[:-3]].reset_index(drop=True), once[sl.CSV_SUTUNLAR[:-3]])
     # ikinci çalıştırma yalnız önbellekten (borsada olmayan sembol önbelleğe yazılamaz: yalnız o yeniden sorulur)
     ex.istek, ex.istenen = 0, set()
     yeni_dizin = tmp_path / 'yeni' / 'alt'                                      # yoksa başta oluşturulur
@@ -1006,6 +1486,67 @@ def test_uctan_uca_gomulu_etki_bulunur(tmp_path):
     assert all(k['sonuc'] == 'KALDI' for k in rastgele['karar'].values())
 
 
+def test_uctan_uca_yatay_donus_gomulu_etki_bulunur(tmp_path):
+    """Trendsiz BTC (saatlerin ~%90'ı YATAY) ve dipten sonra ortalamaya dönen yatay coinler: YATAY_DONUS sınamada
+    kazanır ve geçer; trend bileşeni hiç sinyal vermediği için REJIM_KOMBO işlemleri YATAY_DONUS'unkilerin aynısıdır.
+    Aynı dipler rastgele devam ederse (dönüş yok) yeni satırların hiçbiri geçmez."""
+    ts = np.arange(VERI_BAS, VERI_BIT, SAAT, dtype=np.int64)
+    n = len(ts)
+    sonuclar = {}
+    for donus in (True, False):
+        veri = {'BTC/USDT': _satirlar(ts, yatay_btc(n))}
+        for i in range(8):
+            veri[f'D{i:02d}/USDT'] = _satirlar(ts, donus_piyasasi(n, 30 + i, donus, faz=11 * i))
+        a = _arguman(tmp_path / str(donus), '--ayrim', '2023-04-01', '--ai-yok', '--kurallar', 'YATAY_DONUS',
+                     'REJIM_KOMBO', 'REJIM_KOMBO_BOT')
+        os.makedirs(tmp_path / str(donus), exist_ok=True)
+        sonuclar[donus] = sl.calistir(SaatlikBorsa(veri), a, simdi_ms=SIMDI, log=lambda *x: None)
+    an, isl = sonuclar[True]['analiz'], sonuclar[True]['islemler']
+    s = an['sonuclar']['YATAY_DONUS']['sinama']
+    assert s['n'] >= 100 and s['beklenti_pct'] > 1.0 and s['p_pozitif'] == 1.0
+    assert an['karar']['YATAY_DONUS']['sonuc'] == 'GEÇTİ'
+    assert an['rejim_dagilim']['sinama']['YATAY'] > 80
+    assert an['rejim']['YATAY_DONUS']['sinama']['YATAY']['n'] == s['n']             # hepsi YATAY rejiminde
+    assert all(an['rejim']['YATAY_DONUS']['sinama'][r]['n'] == 0 for r in ('TREND_YUKARI', 'TREND_ASAGI'))
+    y = isl[isl['kural'] == 'YATAY_DONUS'].reset_index(drop=True)
+    assert set(y['cikis_tipi']) >= {'SINYAL'} and (y['sure_saat'] <= 24).all() and (y['rejim'] == 'YATAY').all()
+    k = isl[isl['kural'] == 'REJIM_KOMBO'].reset_index(drop=True)
+    assert set(k['bilesen']) == {'YATAY_DONUS'}
+    sutun = [x for x in sl.CSV_SUTUNLAR[:-3] if x != 'kural']
+    pd.testing.assert_frame_equal(k[sutun], y[sutun])
+    rastgele = sonuclar[False]['analiz']
+    r = rastgele['sonuclar']['YATAY_DONUS']['sinama']
+    assert r['n'] >= 100 and r['beklenti_pct'] < 0                            # aynı dipler, dönüş yok
+    assert all(k['sonuc'] == 'KALDI' for k in rastgele['karar'].values())
+
+
+def test_uctan_uca_btc_trend_rejimi_karar_saatinden(tmp_path):
+    """BTC_TREND işleminin rejimi karar saatinin (karar gününün son saati = giriş - 1 saat) rejimidir. Giriş gününün
+    ilk 3 saati ve 12. saati eksik: giriş günü boyunca (ADX son 15 saati ister) rejim BILINMIYOR; rejim girişten ya da
+    giriş gününün herhangi bir saatinden (ör. gün sonundan) okunsaydı BILINMIYOR çıkardı."""
+    ts = np.arange(VERI_BAS, VERI_BIT, SAAT, dtype=np.int64)
+    n = len(ts)
+    rng = np.random.default_rng(3)
+    c = 20000 * (1 + rng.normal(0, 0.001, n))
+    yuksel, gir, dus = (int(np.searchsorted(ts, vs_ms(x))) for x in ('2023-03-01', '2023-03-02', '2023-03-15'))
+    c[yuksel:gir] *= np.linspace(1.0, 1.03, gir - yuksel)                       # 1 Mart: kapanış MA100 x 1.02 üstü
+    c[gir:] *= 1.03
+    c[dus:] *= 0.92                                                             # 15 Mart: MA100 x 0.98 altı, çıkış
+    o = np.r_[c[0], c[:-1]]
+    d = _satirlar(ts, (o, np.maximum(o, c) * 1.001, np.minimum(o, c) * 0.999, c, np.full(n, 5e7) / c))
+    d = np.delete(d, [gir, gir + 1, gir + 2, gir + 12], axis=0)
+    a = _arguman(tmp_path, '--ai-yok', '--kurallar', 'BTC_TREND')
+    sonuc = sl.calistir(SaatlikBorsa({'BTC/USDT': d}), a, simdi_ms=SIMDI, log=lambda *x: None)
+    isl = sonuc['islemler']
+    assert len(isl) == 1 and isl['giris_ts'][0] == vs_ms('2023-03-02') and isl['bilesen'][0] == 'BTC_TREND'
+    g0 = ((vs_ms('2023-01-01') - sl.ISINMA_GUN * GUN) // SAAT) * SAAT
+    i = int((vs_ms('2023-03-02') - g0) // SAAT)
+    assert (sonuc['btc']['rejim'][i:i + 24] == 'BILINMIYOR').all() and sonuc['btc']['rejim'][i - 1] == 'TREND_YUKARI'
+    assert isl['rejim'][0] == sonuc['btc']['rejim'][i - 1] == 'TREND_YUKARI'
+    assert np.isnan(isl[sl.OZELLIKLER].to_numpy(dtype=float)).all()
+    assert sonuc['analiz']['rejim']['BTC_TREND']['kurulus']['TREND_YUKARI']['n'] == 1
+
+
 # ------------------------------------------------------------------------------------------
 # Uçtan uca gelecek bilgisi: calistir'in kendi akışı (kesit/radar, BTC dilimi, AI) T'den sonrasını kullanmaz
 # ------------------------------------------------------------------------------------------
@@ -1043,10 +1584,27 @@ def _esit(x, y):
     return np.array_equal(x, y, equal_nan=x.dtype.kind == 'f')
 
 
+def _bozulmus(d, T, rng, sil_saat=()):
+    """d: (ts, o, h, l, c, v) satırları. T'den itibaren O, H, L, C ayrı ayrı x0.5..2 (H/L yeniden sınırlanır), hacim
+    x0.2..5; T'den sonraki satırların ~%3'ü ve sil_saat'teki saatler (T'ye göre) silinir (mum yok)."""
+    d2 = d.copy()
+    m = d2[:, 0] >= T
+    d2[m, 1:5] *= rng.uniform(0.5, 2.0, (m.sum(), 4))
+    d2[m, 2] = np.maximum(d2[m, 2], d2[m][:, [1, 4]].max(axis=1))
+    d2[m, 3] = np.minimum(d2[m, 3], d2[m][:, [1, 4]].min(axis=1))
+    d2[m, 5] *= rng.uniform(0.2, 5.0, m.sum())
+    sil = (d2[:, 0] > T) & (rng.random(len(d2)) < 0.03)
+    return d2[~(sil | np.isin(d2[:, 0], T + SAAT * np.asarray(sil_saat, dtype=np.int64)))]
+
+
 def test_uctan_uca_calistir_gelecek_bilgisi_kullanmaz(tmp_path, monkeypatch):
-    """T'den itibaren TÜM paritelerin (BTC dahil) mumları değiştirilir (mum içi biçim ve hacim de). Evren sabit.
-    T öncesindeki radar, BTC bağlamı, göstergeler, sinyaller; girişi T'den önce olan işlemler (özellikler, AI skoru ve
-    eşiği), T'ye kadar kapanan işlemlerin tamamı ve T öncesi AI ayları iki çalıştırmada aynı olmalı."""
+    """T'den itibaren TÜM paritelerin (BTC dahil) mumları değiştirilir (mum içi biçim ve hacim de) ve bir kısmı
+    silinir (BTC'nin T, T+1, T+2, T+12 saatleri: B'de rejim T'den sonraki gün boyu BILINMIYOR). Evren sabit. GAP
+    paritesinde T'den 2 saat önce biten 3 saatlik boşluk var (ADX'siz saatler T'yi kapsar). T öncesindeki radar, BTC
+    bağlamı, göstergeler, sinyaller; girişi T'den önce ya da TAM T'de olan işlemlerin karar anı alanları (varlık, rejim,
+    bileşen, özellikler, AI skoru, eşiği ve seçimi; giriş fiyatı yalnız T'den önce), T'ye kadar kapanan işlemlerin
+    tamamı ve T öncesi AI ayları iki çalıştırmada aynı olmalı. İkinci kesme T2 = bir BTC_TREND girişi: o işlemin
+    karar saatindeki alanları da (rejim karar saatinden; giriş günü B2'de BILINMIYOR)."""
     bas, bit, T = vs_ms('2022-08-01'), vs_ms('2024-03-01'), vs_ms('2023-12-01')
     ts = np.arange(bas, bit, SAAT, dtype=np.int64)
     n = len(ts)
@@ -1055,22 +1613,18 @@ def test_uctan_uca_calistir_gelecek_bilgisi_kullanmaz(tmp_path, monkeypatch):
         veri[f'C{i:02d}/USDT'] = _satirlar(ts, rastgele_mumlar(n, i + 1, 10.0, 0.012, 1e6 * (0.5 + i / 6)))
     for i in range(3):
         veri[f'E{i:02d}/USDT'] = _satirlar(ts, birikim_piyasasi(n, 30 + i, True, faz=37 * i))
+    for i in range(2):
+        veri[f'D{i:02d}/USDT'] = _satirlar(ts, donus_piyasasi(n, 40 + i, faz=7 * i))
     bosluk = _satirlar(ts, rastgele_mumlar(n, 77, 5.0, 0.012, 1e6))
-    veri['GAP/USDT'] = bosluk[(ts < vs_ms('2023-11-20')) | (ts >= vs_ms('2023-11-21 06:00'))]
+    veri['GAP/USDT'] = bosluk[((ts < vs_ms('2023-11-20')) | (ts >= vs_ms('2023-11-21 06:00')))
+                              & ((ts < T - 5 * SAAT) | (ts >= T - 2 * SAAT))]
     veri['NEW/USDT'] = _satirlar(ts, rastgele_mumlar(n, 78, 5.0, 0.012, 1.5e6))[ts >= vs_ms('2023-05-01')]
     veri['USDX/USDT'] = np.column_stack([ts, np.ones(n), np.full(n, 1.0002), np.full(n, 0.9998),
                                          1 + np.random.default_rng(7).normal(0, 0.0001, n), np.full(n, 3e6)])
     tickers = {s: {'quoteVolume': 1e9 - i} for i, s in enumerate(veri)}
     rng = np.random.default_rng(123)
-    bozuk = {}
-    for s, d in veri.items():
-        d2 = d.copy()
-        m = d2[:, 0] >= T
-        d2[m, 1:5] *= rng.uniform(0.5, 2.0, (m.sum(), 4))                       # O, H, L, C ayrı ayrı
-        d2[m, 2] = np.maximum(d2[m, 2], d2[m][:, [1, 4]].max(axis=1))
-        d2[m, 3] = np.minimum(d2[m, 3], d2[m][:, [1, 4]].min(axis=1))
-        d2[m, 5] *= rng.uniform(0.2, 5.0, m.sum())
-        bozuk[s] = d2
+    bozuk = {s: _bozulmus(d, T, rng, (0, 1, 2, 12) if s == 'BTC/USDT' else ()) for s, d in veri.items()}
+    silinen_T = {'BTC/USDT'}                    # B'de T mumu olmayan parite: oradaki T girişleri (giriş mumu yok) düşer
 
     def kos(ad, data):
         with monkeypatch.context() as mp:
@@ -1106,13 +1660,27 @@ def test_uctan_uca_calistir_gelecek_bilgisi_kullanmaz(tmp_path, monkeypatch):
             assert _esit(x[:iT], B['yak'].s[s][k][:iT]), (s, k)
     anahtar = ['kural', 'sembol', 'giris_ts']
     ia, ib = A['islemler'], B['islemler']
-    pa = ia[ia['giris_ts'] < T].set_index(anahtar).sort_index()
-    pb = ib[ib['giris_ts'] < T].set_index(anahtar).sort_index()
+
+    def karar_ani(isl):                         # girişi T'den önce ya da tam T'de (karar mumu T - 1 saat, değişmedi)
+        m = (isl['giris_ts'] < T) | ((isl['giris_ts'] == T) & ~isl['sembol'].isin(silinen_T))
+        return isl[m].set_index(anahtar).sort_index()
+    pa, pb = karar_ani(ia), karar_ani(ib)
     assert pa.index.equals(pb.index)
-    assert set(pa.index.get_level_values('kural')) >= {'BOT_VEKILI', 'TREND_DIP_RSI2', 'ERKEN_BIRIKIM'}
+    tam_T = (pa.index.get_level_values('giris_ts') == T)
+    assert tam_T.sum() >= 2 and {'BOT_VEKILI', 'REJIM_KOMBO_BOT'} <= set(pa.index.get_level_values('kural')[tam_T])
+    assert np.isfinite(pa['ai_skor'].to_numpy()[tam_T]).any()                 # T'de giren AI skorlu işlem de var
+    assert set(pa.index.get_level_values('kural')) >= {'BOT_VEKILI', 'TREND_DIP_RSI2', 'ERKEN_BIRIKIM', 'YATAY_DONUS',
+                                                       'REJIM_KOMBO', 'REJIM_KOMBO_BOT'}
+    assert {(k, b) for k, b in zip(pa.index.get_level_values('kural'), pa['bilesen'])} >= {
+        ('REJIM_KOMBO', 'ERKEN_BIRIKIM'), ('REJIM_KOMBO', 'YATAY_DONUS'), ('REJIM_KOMBO_BOT', 'BOT_VEKILI'),
+        ('REJIM_KOMBO_BOT', 'YATAY_DONUS')}                                     # iki kombonun iki bileşeni de
+    assert set(pa['rejim']) >= set(sl.REJIMLER)
     assert np.isfinite(pa['ai_skor']).sum() > 0                                # T öncesinde AI skorlu işlemler var
-    for kol in sl.OZELLIKLER + ['giris_fiyat', 'ai_skor', 'ai_esik', 'ai_secildi']:
+    for kol in sl.OZELLIKLER + ['ai_skor', 'ai_esik', 'ai_secildi', 'rejim', 'bilesen']:   # karar anı alanları
         assert _esit(pa[kol].to_numpy(), pb[kol].to_numpy()), kol
+    assert _esit(pa['giris_fiyat'].to_numpy()[~tam_T], pb['giris_fiyat'].to_numpy()[~tam_T])   # T açılışı değişti
+    cift = pa.index.get_level_values('kural') != 'BTC_TREND'                   # BTC_TREND'de özellik yok (NaN)
+    assert np.isfinite(pa['btc_adx14'][cift]).all() and np.isfinite(pa['adx14'][cift]).mean() > 0.99
     ka = pa[pa['cikis_ts'] <= T]
     assert len(ka) and len(ka) < len(pa)
     for kol in ['cikis_ts', 'cikis_fiyat', 'cikis_tipi', 'getiri_k05', 'getiri_k1', 'getiri_k2', 'sure_saat']:
@@ -1123,3 +1691,25 @@ def test_uctan_uca_calistir_gelecek_bilgisi_kullanmaz(tmp_path, monkeypatch):
         once = [x for x in kayit if vs_ms(x['ay'] + '-01') < T]
         assert once == [x for x in B['ai_aylar'][kural] if vs_ms(x['ay'] + '-01') < T], kural
     assert any(x['model'] for k in A['ai_aylar'] for x in A['ai_aylar'][k] if vs_ms(x['ay'] + '-01') < T)
+    # ikinci kesme T2 = sınamadaki ilk BTC_TREND girişi (karar: önceki günün kapanışı; dolum o kapanıştan). B2'de BTC
+    # T2'den itibaren bozuk ve T2, T2+1, T2+2, T2+12 saatleri eksik: giriş günü boyunca rejim BILINMIYOR
+    T2 = int(ia.loc[(ia['kural'] == 'BTC_TREND') & (ia['giris_ts'] >= vs_ms('2023-10-01')), 'giris_ts'].iloc[0])
+    a2 = sl.arguman_ayristirici().parse_args(
+        ['--baslangic', '2023-01-01', '--bitis', '2024-03-01', '--ayrim', '2023-10-01', '--onbellek',
+         str(tmp_path / 'b2_onb'), '--cikti', str(tmp_path / 'b2'), '--kurallar', 'BTC_TREND', '--ai-yok'])
+    B2 = sl.calistir(SaatlikBorsa({'BTC/USDT': _bozulmus(veri['BTC/USDT'], T2, rng, (0, 1, 2, 12))}), a2,
+                     simdi_ms=bit + 5 * SAAT, log=lambda *x: None)
+    iT2 = int((T2 - g0) // SAAT)
+    for k in A['btc']:
+        assert _esit(A['btc'][k][:iT2], B2['btc'][k][:iT2]), k
+    assert (B2['btc']['rejim'][iT2:iT2 + 24] == 'BILINMIYOR').all()
+    assert not (A['btc']['rejim'][iT2 - 1:iT2 + 24] == 'BILINMIYOR').any()
+    xa = ia[(ia['kural'] == 'BTC_TREND') & (ia['giris_ts'] <= T2)].reset_index(drop=True)
+    xb = B2['islemler'][B2['islemler']['giris_ts'] <= T2].reset_index(drop=True)
+    assert len(xa) == len(xb) >= 2 and xa['giris_ts'].iloc[-1] == T2
+    for kol in ['kural', 'bilesen', 'rejim', 'giris_ts', 'giris_fiyat'] + sl.OZELLIKLER:
+        assert _esit(xa[kol].to_numpy(), xb[kol].to_numpy()), kol
+    kapandi = (xa['cikis_ts'] <= T2).to_numpy()
+    assert kapandi.sum() >= 1
+    for kol in ['cikis_ts', 'cikis_fiyat', 'getiri_k05', 'getiri_k1', 'getiri_k2', 'sure_saat']:
+        assert _esit(xa[kol].to_numpy()[kapandi], xb[kol].to_numpy()[kapandi]), kol

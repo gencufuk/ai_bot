@@ -946,3 +946,16 @@ Bu ek, 212'deki ilk laboratuvar çalıştırmasının sonuçları görülmeden y
   - İki dosyanın tutarlı tutulması gerekir. Geçmişte aynı dosyaya iki botun yazması veriyi kirletti (REZ, §11.10).
 - Doğrusu: tek dosya ve rejim sütunu. Eğitimde gerekirse filtre uygulanır ya da rejim feature olarak kullanılır.
 
+**Uygulama notu (4 Ekim, sonuçlardan önce).**
+- **ADX:** Wilder'ın ilk 14 mumluk ortalaması yerine ilk değerden başlayan üstel ortalamayla hesaplanır; fark ısınmada kaybolur (pandas_ta ile fark 2e-8). Eksik saatten sonraki 15 saatte ADX yoktur; boşluktan hemen sonra bayat değerle rejim ya da sinyal üretilmez.
+- **İşlem evreni:** BTC/USDT, önceki kurallarda olduğu gibi işlem evreninde de var.
+- **Önceki sürümle uyum:** İlk 6 kuralın işlemleri önceki sürümle birebir aynı. Yalnız AI satırları değişir; nedeni 17 feature.
+- **Testler:** `tests/test_strateji_lab.py` 54 test, pandas 2.3.3 ve 3.0.6'da aynı sonuç. Tüm takım 215 test.
+- **İnceleme:** 6 bulgu çıktı (1 önemli: çalışma süresi). Hepsi kapatıldı; sonuçlar değişmeden hızlandırıldı.
+- **Yapay hata (mutasyon) testi:** 40 yapay hatanın hepsini testler yakaladı. Aralarında şunlar var:
+  - ADX'in bir sonraki mumu kullanması;
+  - kombonun iki pozisyonu üst üste açması;
+  - orta bant çıkışında ">=" yerine ">" kullanılması;
+  - rejimin yön bilmemesi.
+- **CSV:** İşlem dosyasına `rejim` ve `bilesen` sütunları eklendi. Trend ve yatay işlemler Excel'de bu sütunlarla süzülebilir.
+

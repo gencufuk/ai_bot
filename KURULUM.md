@@ -222,6 +222,13 @@ tail -n 3 /root/lab.log                  # ilerleme: "geçiş 2 ... 40/80 parite
 cat /root/strateji_lab_rapor.txt         # bitince; 7) KARAR bölümü sonuçtur
 gzip -k /root/strateji_lab_islemler.csv  # yüklemek için: rapor.txt, rapor.json, islemler.csv.gz
 ```
+Trend/yatay eki (ANALIZ §12.1: rejim, YATAY_DONUS, REJIM_KOMBO, REJIM_KOMBO_BOT). Kodu güncelledikten sonra
+önbellekten birkaç dakikada çalışır. Önceki raporun üzerine yazmasın diye ayrı çıktı adıyla:
+```bash
+screen -dmS lab2 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/strateji_lab.py --cikti /root/strateji_lab2 > lab2.log 2>&1"
+tail -n 3 /root/lab2.log
+gzip -k /root/strateji_lab2_islemler.csv  # yüklemek için: strateji_lab2_rapor.txt, _rapor.json, _islemler.csv.gz
+```
 
 ## Geri dönüş
 - Kod güncellemesini geri almak: botu durdurun, `eski_kod_<tarih>/` içindekileri `/root`'a geri taşıyın.
