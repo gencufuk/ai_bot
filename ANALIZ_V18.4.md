@@ -823,3 +823,67 @@ Kullanıcı bu çalışmayı ve 89'un son ~4 günlük Telegram log'unu (34 pozis
   - Çıkış mesajına ve CSV'ye karar anı fiyatı, kural seviyesi ve dolum farkı.
   - /durum'da süre eki "s" yerine "sa".
   - Zararla kapanan KİLİT çıkışı stop sayacını sıfırlıyor (ai_bot.py:673-676); etkisi küçük.
+
+## 12. Strateji laboratuvarı: erken giriş, yüksek isabet ve yürüyen AI (4 Ekim, ön kayıt)
+**Soru (kullanıcı):** Kod kazandırmıyorsa çalıştırmanın anlamı yok. İstenen: coin çok yükselmeden alan, AI destekli, 10 işlemde 7–8 kazanan ve aylık düzenli gelir getiren bir yöntem.
+
+**Neden yeni test:** Canlı yöntem (24 saatin en çok yükselenine kırılımda girmek) simülasyonda 18 ayın 17'sinde zararda (§11.5). Hiçbir çıkış ayarı bunu düzeltmiyor (§11.9–11.10). Günlük kurallar 2025–26'da kazandırmadı (§11.1). Gün içi "yükselmeden önce gir" ve "yüksek isabet" tasarımları henüz test edilmedi.
+
+**Önemli not, kazanma oranı:** Kazanma oranı tek başına kâr demek değil. Örnek: hedef +%1.5, stop −%4, işlem başı maliyet ~%0.3. Başa baş için kazanma oranı en az %78 olmalı: p × 1.2 ≥ (1 − p) × 4.3. Yani "10'da 7" bu tasarımda zarar ettirir. Karar kuralı bu yüzden kazanma oranına değil, sinyal başı net beklentiye bakar. %70 kazanma oranı yalnız bilgi olarak işaretlenir.
+
+**Araç:** `tools/strateji_lab.py`. Testler `tests/test_strateji_lab.py` (41 test). Test kapsamı:
+- gelecek bilgisi, uçtan uca ve gelecek mumların şekli de değiştirilerek;
+- çıkış motoru, elle hesaplanmış örneklerle;
+- AI eğitim kümeleri;
+- bootstrap ve karar kuralı;
+- bütçe hesabı;
+- gömülü etki: kurulan etki bulunuyor, rastgele piyasada hiçbir kural geçmiyor.
+
+Yedi ajanlı bağımsız inceleme 18 bulgu çıkardı (5 önemli, kritik yok); hepsi düzeltildi. 36 yapay hatanın (mutasyon) hepsini testler yakaladı.
+- **Veri:** Binance 1 saatlik mumlar, 2023-01-01'den bugüne. Evren: BTC ve bugünün en hacimli 80 USDT paritesi. Sabit coinler paritenin ilk 720 saatine bakılarak çıkarılır; gelecekteki bir fiyat kopması kararı etkilemez.
+- **Karar ve giriş zamanı:** Karar kapanmış mumda verilir, alım bir sonraki mumun açılışından yapılır.
+- **Dönemler:** kuruluş 2023–2024, sınama 2025 → son tamamlanmış ay (`--bitis` verilmezse). 8 Ekim'den önce çalıştırılırsa girişler 1 Eylül 2026'da biter, sonra 1 Ekim'de. Yarım son ay, sonucuna göre seçilmiş işlemler içermesin diye dahil edilmez.
+- **Maliyet:** komisyon taraf başı %0.1. Kayma: girişte %0.05, stop/takip seviyesinde %0.15, zaman çıkışında %0.05. Duyarlılık için maliyet yarıya indirilir ve ikiye katlanır.
+
+**Kurallar** (parametreler sabit, sonuca göre değiştirilmeyecek):
+
+| Kural | Giriş | Çıkış |
+|---|---|---|
+| BOT_VEKILI | Canlı botun 1 saatlik vekili: 24 saatte en çok yükselen 10 (hacim ≥ 12M), fiyat > EMA20, ATR ≤ %3, RSI14 > 55, hacim oranı > 2.5 | KADEMELI |
+| ERKEN_BIRIKIM | Kullanıcının fikri. 24 saatlik değişim −%3…+%6 (henüz yükselmemiş). Fiyat > EMA50 ve EMA20 > EMA50. RSI14 50–68 (şişmemiş). Son 6 saatin hacmi, önceki 7 günün medyanının en az 2 katı. 6 saatin en az 4'ünde hacim medyanın üstünde (tek mumluk sahte hacim değil). 24 saatlik zirve kırılmış. BTC, EMA200 (1s) üstünde. | KADEMELI |
+| SIKISMA_KIRILIM | Bollinger genişliği son 30 günün en dar %20'sinde. Kapanış üst bandın üstünde. Hacim, 20 mum ortalamasının en az 2 katı. 24 saatlik değişim ≤ %8. BTC, EMA200 üstünde. | KADEMELI |
+| TREND_DIP_RSI2 | Yüksek isabetli dönüş (Connors). Günlük ortalama hacim ≥ 20M. Fiyat > EMA200. RSI2 < 10. BTC, EMA200 üstünde. | Kapanış SMA5'in üstüne çıkınca; sert stop −%7; en fazla 48 saat |
+| YUKSEK_ISABET | ERKEN_BIRIKIM ile aynı giriş | Hedef +%1.5, stop −%4, en fazla 24 saat ("10'da 7–8" hedefinin doğrudan testi) |
+| BTC_TREND | Karşılaştırma. BTC günlük kapanışı MA100 × 1.02 üstünde → al; MA100 × 0.98 altında → sat. | — |
+
+**KADEMELI (kullanıcının merdiveni):**
+- Başlangıç stopu girişin %2 altı.
+- Zirve kârı +%5'i görünce stop zirvenin %3 altı; +%10'da %4 altı; +%50'de %10 altı.
+- Stop yalnız yukarı gider. En fazla 7 gün tutulur.
+- Mum içi sıra: yeşil mumda açılış → dip → tepe → kapanış, kırmızı mumda açılış → tepe → dip → kapanış.
+
+**AI (yürüyen eğitim):**
+- Kurallar 1–5'in her biri için ayrı model.
+- Her ay başında yalnız o tarihten **önce kapanmış** işlemlerle XGBoost eğitilir; en az 200 işlem, her sınıftan en az 30 gerekir.
+- Eşik, eğitim tahminlerinin 60. yüzdeliği: en iyi ~%40 alınır.
+- 15 feature: 24s/6s değişim, RSI14, RSI2, hacim oranları, ATR, EMA50/EMA200 uzaklığı, Bollinger yüzdeliği, BTC değişimi ve EMA200 uzaklığı, saat, hacim.
+- Sonuç, aynı işlemlerin AI'sız hâliyle eşleştirilerek karşılaştırılır.
+
+**Karar kuralı** (sonuçtan önce yazıldı). Bir kural ya da AI sürümü ancak hepsi sağlanırsa **GEÇTİ** sayılır:
+1. Sınamada en az 100 işlem.
+2. Sınamada sinyal başı beklenti > 0 ve gün bloklu bootstrap P(>0) ≥ 0.99. Eşik sıkı, çünkü ~11 satır test ediliyor.
+3. Kuruluşta beklenti > 0.
+4. Sınama aylarının en az %60'ı artıda.
+5. Maliyet iki katına çıkınca bile sınamada beklenti > 0.
+
+AI sürümü ek olarak AI'sız hâlinden iyi olmalı (P ≥ 0.90). AI sürümünde 3. koşul, modeli olan kuruluş aylarına uygulanır.
+
+Hiçbir kural geçmezse öneri: **gün içi al-sat botu çalıştırılmaz.** Bu durumda yalnız BTC trend takibi (önce bildirim modunda) ya da hiç işlem yapmamak önerilir.
+
+**Bilinen sınırlar:**
+- Evren bugünün paritelerinden oluşuyor; delist olanlar yok, sonuçlar iyimser.
+- 1 saatlik mum içi sıra bir yaklaşım; 2% stopta 15 dakikalık veriden kaba.
+- AI süzgeci, elenen işlemin kapattığı pozisyon yerine yeni giriş açmaz.
+- BOT_VEKILI canlı botun 1 saatlik vekili, kendisi değil.
+
+**Sonuçlar:** sunucu çalıştırmasından sonra §12.1'e yazılacak.

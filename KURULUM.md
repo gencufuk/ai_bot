@@ -213,6 +213,15 @@ screen -dmS kademe2 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v18
 cd /root && nice -n 10 venv/bin/python -u tools/strateji_arastirma.py > strateji.log 2>&1
 cat /root/strateji_rapor.txt
 ```
+**Strateji laboratuvarı** (ANALIZ §12): coin yükselmeden giren, yüksek isabetli ve AI süzgeçli kuralların 1 saatlik
+veride testi. Önceden yazılmış karar kuralıyla, 2023'ten son tamamlanmış aya kadar. İlk çalıştırma ~2800 API isteği,
+~15-25 dk, ek bellek ~200-300 MB:
+```bash
+screen -dmS lab bash -c "cd /root && nice -n 10 venv/bin/python -u tools/strateji_lab.py > lab.log 2>&1"
+tail -n 3 /root/lab.log                  # ilerleme: "geçiş 2 ... 40/80 parite" gibi
+cat /root/strateji_lab_rapor.txt         # bitince; 7) KARAR bölümü sonuçtur
+gzip -k /root/strateji_lab_islemler.csv  # yüklemek için: rapor.txt, rapor.json, islemler.csv.gz
+```
 
 ## Geri dönüş
 - Kod güncellemesini geri almak: botu durdurun, `eski_kod_<tarih>/` içindekileri `/root`'a geri taşıyın.
@@ -229,3 +238,4 @@ cat /root/strateji_rapor.txt
   - `gecmis_simulasyon.py`
   - `v184_simulasyon.py`
   - `strateji_arastirma.py`
+  - `strateji_lab.py`: erken giriş / yüksek isabet / AI kurallarının 1 saatlik veride testi
