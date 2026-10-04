@@ -20,7 +20,7 @@
 
 **Önerilen sıra:** (1) V18.4'ün kurulumu (`KURULUM.md`, sürükle-bırak paketi) ve gürültü olduğu ölçülen `filter_model.json`'un kaldırılması; (2) `shadow_labeler.py` + `backfill_sinyaller.py` + `ai_trainer.py --kuru`; (3) trainer kapılardan geçen bir model üretince eski core modelin yerini alır.
 
-**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor. Kullanıcının "yükselişi erken yakala" fikri 9 ayda test edildi (§11.3): 4 saatlik radar 24 saatlikten kötü, canlı radar değişmedi. Kaybettiren çıkışların %86'sı stop; stopların yarısı alımdan sonraki 32 dakikada. "Daha erken sat" fikri çıkış ayarlarıyla aynı sinyallerde denendi (§11.4): kârı erken almak kötüleştiriyor; yalnız 2 saatlik zaman aşımı tutarlı iyileşme gösteriyor. Bu sonuç bağımsız dönemde (Nisan–Aralık 2025) doğrulandı (§11.5), ama etkisi küçük: canlı kurulum 18 ayın 17'sinde zararda ve bu değişiklik tabloyu değiştirmiyor.
+**Güncelleme (kullanıcının yedeğiyle):** 20 Eylül'de kaybolan V1 tarihçesi, kullanıcının şema değişikliğinden önceki yedeğinden **boşluksuz kurtarıldı** (608 + 52 + 45 = 705 satır; trainer loglarındaki 603 → 655 sayılarıyla birebir tutarlı). Gerçek işlemlerin bütçe kısıtlı yeniden oynatması §10'da; 5/7 Ağustos başlangıçlı sonuçlar ve V18.4 filtrelerinin gerçek girişlere etkisi §10.1–10.2'de. V18.4 çıkış mantığı ve rejim filtresinin fiyat verisiyle simülasyonu için `tools/v184_simulasyon.py` yazıldı (§10.3) ve 26 Eylül'de sunucuda çalıştırıldı (§10.4). Sonuç: eski core modelin vetosu bu dönemde işe yarıyor, V18.4 çıkışları Ağustos'unkilerle başa baş. 30 Eylül'de 6 aylık etiketli sinyallerle zararın kaynağı incelendi (§10.6): satış değil giriş; girişin 6 ayda kalıcı bir üstünlüğü görünmüyor. Aynı gün yapılan 9 aylık piyasa taramasında (§10.7) canlı kurulum %−6.7 kaybettiriyor; 9 ayın yalnız biri (Ağustos) artıda. Literatürden seçilen 9 alım kuralı 2023–2026 günlük verisinde test edildi (§11.1): hiçbiri 2025–26'da komisyon sonrası güvenilir kazanç göstermedi. Kanıtı olan tek yaklaşım BTC'de yavaş bir trend filtresi; bu da düşüşü azaltıyor, günlük kazanç üretmiyor. Kullanıcının "yükselişi erken yakala" fikri 9 ayda test edildi (§11.3): 4 saatlik radar 24 saatlikten kötü, canlı radar değişmedi. Kaybettiren çıkışların %86'sı stop; stopların yarısı alımdan sonraki 32 dakikada. "Daha erken sat" fikri çıkış ayarlarıyla aynı sinyallerde denendi (§11.4): kârı erken almak kötüleştiriyor; yalnız 2 saatlik zaman aşımı tutarlı iyileşme gösteriyor. Bu sonuç bağımsız dönemde (Nisan–Aralık 2025) doğrulandı (§11.5), ama etkisi küçük: canlı kurulum 18 ayın 17'sinde zararda ve bu değişiklik tabloyu değiştirmiyor. 4 Ekim'de başka bir modelin (Gemini) 14 iddiası doğrulandı (§11.10): tanı (küçük kilit kazancı, büyük stop) doğru; AI vetosunu kapatmak ve eşzamanlı pozisyonu 2'ye indirmek zararı artırıyor, YATAY ve hacim kuralları zaten var.
 
 ---
 
@@ -49,7 +49,7 @@ grep -n "CSV şeması güncellendi\|CSV bozuk görünüyor" <bot log dosyası>
 `.bozuk_*` varsa veri kurtarılabilir (`python tools/csv_onar.py <dosya> --v1-basliksiz`). Boş satırlar varsa veri o dosyada kalıcı olarak kaybolmuştur.
 
 **Kurtarma yapıldı:** kullanıcının 16 Eylül öncesi yedeği (608 satır, 31 Mayıs – 14 Eylül) + V2 yedeği (52 satır, 16–20 Eylül) + güncel V1 (45 satır, 21–25 Eylül) = tam tarihçe. Yedekte iki kirlilik bulundu ve ayıklandı:
-- **Başka bir botun 9 işlemi** (6–14 Eylül): ana botun kodunda olmayan çıkış tipleri (`🏹 KADEMELİ/GÜÇLÜ/İLK TRAILING STOP`), 40 USDT büyüklük, komisyonsuz kayıt, 12–434 saat tutma (BTC 18 gün). REZ/USDT'deki −%30.9'luk kayıp (−12.36 USDT) bunlardan biri. Aynı dosyaya iki botun yazması tehlikelidir; ikinci botun ayrı klasör/Redis öneki kullanması gerekir.
+- **Başka bir botun 9 işlemi** (6–14 Eylül): ana botun kodunda olmayan çıkış tipleri (`🏹 KADEMELİ/GÜÇLÜ/İLK TRAILING STOP`), çoğu 40 USDT büyüklük, komisyonsuz kayıt, 0–434 saat tutma (434 saat = BTC, 18 gün). 9 satırın toplamı −11.41 USDT (+5.16 / −16.57); REZ/USDT'deki −%30.9'luk kayıp (−12.36 USDT) bunlardan biri. V18.4 bu REZ alımını yapmazdı (ATR %3.38 > %3). Aynı dosyaya iki botun yazması tehlikelidir; ikinci botun ayrı klasör/Redis öneki kullanması gerekir.
 - **5 sahiplenilmiş bakiye**: feature'sız, sinyalsiz pozisyonlar. 18 Temmuz'da bir **stablecoin (USD1)** ve **~178 USDT'lik ENA** bakiyesi sahiplenilip zaman aşımıyla satıldı (−4.02 USDT). Bu, §5 #9'daki riskin gerçekte yaşanmış hâli.
 
 Temiz tarihçe `core_islem_verileri_v2_gecmis.onarildi.csv` olarak pakette; labeler bu adı otomatik okur ve 502 geçmiş pozisyonu tek tip etiketle etiketler (canlı dağılımdan gelen gerçek girişler, backfill'in kısmi mum farkını dengeler).
@@ -792,3 +792,34 @@ Radar yalnız son 24 saatte en çok yükselen 10 pariteyi tarar. Alım anında v
 - **Yalnız kilidi kaldırmak etkisiz.** İyileşme dar stop ile geç ilk kademenin birleşiminden geliyor.
 - **Geniş stop ("uçanı kaçırma") kötüleştiriyor.** Ara sıra gelen büyük kazançlar, büyüyen kayıpları karşılamıyor.
 - **2026 doğrulaması bekleniyor.** Düzeltilmiş simülatörle KADEMELI, KADEMELI + 2 saat zaman aşımı ve ZAMAN2 iki dönemde yeniden çalıştırılacak (KURULUM). Karar kuralı: iki dönemde de sinyal başı artı ve 450 USDT bütçede daha iyi.
+
+### 11.10 Başka bir modelin (Gemini) değerlendirmesinin doğrulanması (4 Ekim, yerel hesap)
+Kullanıcı bu çalışmayı ve 89'un son ~4 günlük Telegram log'unu (34 pozisyon) Gemini'ye inceletti. 14 iddia, her biri için bir inceleyen ve bir şüpheci ile kod, log, canlı CSV ve iki dönemin simülasyonu (2026 n=1032, 2025 n=1409–1453; gün bloklu bootstrap) üzerinden doğrulandı.
+
+**Tanı doğru, reçetenin çoğu yanlış ya da zaten var.** 89'un log'u gerçekten kötü: 9 kazanç / 24 kayıp / 1 başa baş, kazanma %26.5, PF 0.14, net −10.63 USDT, R:R 1:0.37. Kâr kilidiyle kapananlar ortalama +0.11 USDT, stoplar −0.59 USDT (oran 0.30).
+
+| # | İddia | Hüküm | Dayanak |
+|---|---|---|---|
+| 1 | AI rastgele, vetoyu kapat | kısmen | Model zayıf (AUC ~0.5) ama veto kapatılınca 450 USDT bütçede zarar büyüyor: 2026 −30 → −108, 2025 −116 → −151. Filtre modeli zaten kapalı. "%66" gölge modda açılan işlemlerdi (−7.87). |
+| 2 | Kilit ve %5–8 stop zarar ettirdi | kısmen | Canlıda stop en fazla %4.5 (ATR ≤ %3). %5–8 yalnız simülasyon varyantı (GENIS5, daha kötü). Kilit V18.0.2'den beri var. |
+| 3 | REZ kirliliği −12.36 | kısmen | Tek satır; 9 satırın toplamı −11.41, 6–14 Eylül, V18.4'ten önce, başka bot/sürüm. Bugünkü zararla ilgisi yok. |
+| 4 | Komisyon/kayma | kısmen | İşlem başı ~%0.37. 2026'da maliyet öncesi %+0.27 [−0.03, +0.59], 2025'te %−0.12: maliyet ikincil, asıl sorun giriş. BNB ile komisyon ~%0.05 azalır. |
+| 5 | 4 feature yetersiz, yenilerini ekle | kısmen | V3 eğitici bu feature'ları zaten içeriyor; kapılar geçilmedi (ekonomik p=0.14, canlı kanıt 18/50). |
+| 6 | Eski sürüm 3–4 kat kaybettirirdi | yanlış | Eski bot 1.0–1.4 kat daha kötü. |
+| 7 | 36 işlem, %30.6, PF 0.14, R:R 1:0.30 | kısmen | 34 pozisyon, %26.5, R:R 1:0.37; net ve PF doğru. Başa baş için %72.9 kazanma gerekiyor. |
+| 8 | ARK'ın −%1.52 "kilit" çıkışı hata | kısmen | Kilit hesabı doğru (kilit 0.26090, tetik 0.26477, dolum 0.2544). Etiket kuralı gösterir, gerçekleşen sonucu değil. Fiyat iki kontrol arasında boşluk yaptı ya da 'last' sıçradı; kayıttan ayırt edilemiyor. Uç olay: log'da seviye-dolum farkı medyanı −0.10 puan. |
+| 9 | AI eşiğini %85'e çek | kısmen | Yüksek eşiğin seçim değeri yok (§11.2). |
+| 10 | YATAY'da alım durdur | yanlış | Kural her sürümde var (ai_bot.py:922). /durum'daki "YATAY" sorgu anını gösterir; o anda alım yapılmaz. |
+| 11 | Zaman aşımı saniye, uzat | yanlış | ⏳ saat (/3600). Kısaltmak iyileştiriyor (ZAMAN2 iki dönemde küçük artı). |
+| 12 | Hacim ≥ 1.5 × ort20 | yanlış | Mevcut kural (ort14'ün 2.5 katı = önceki 13 mumun 2.83 katı) daha sıkı. Eşiği yükseltmek iki dönemde tutarlı fayda vermiyor; en yüksek hacim kovası (≥5) iki dönemde de en kötü. |
+| 13 | En fazla 2 eşzamanlı pozisyon | yanlış | Stop kümelenmesi görülmüyor. Sınır yalnız işlem sayısını azaltıyor: 2026'da zarar artıyor (−34.6'ya karşı −31.7), canlı kayıtta kârın %26'sını siliyor. |
+| 14 | R:R ≥ 1.5 hedefle | kısmen | Log için 0.30 doğru; V18.3/18.4 kilidiyle 16–30 Eylül canlıda 0.52. Ama R:R'yi yükselten varyantlar (KILITSIZ 1.26, UCAN 1.28, STOP15 1.35) beklentiyi değiştirmiyor. Yalnız KADEMELI (R:R 2.15) 2025'te +0.115 puan; beklenti yine %−0.39. |
+
+**Sonuç.**
+- Gemini'nin önerilerinden hiçbiri stratejiyi kârlı yapmıyor. Vetoyu kapatmak ve eşzamanlı pozisyonu 2'ye indirmek zararı artırıyor. Hacim kuralı ve YATAY kuralı zaten var. Zaman aşımını uzatmak verilere ters.
+- Doğru tespit: kilit kazançları küçük, stoplar büyük; model zayıf ve güncellenmiyor.
+- Doğrulanmış en iyi çıkış ayarı (KADEMELI) bile sinyal başı %−0.39 bırakıyor. Sorun giriş (§11.7–11.8).
+- Küçük, isteğe bağlı iyileştirmeler (kullanıcı onayı bekliyor):
+  - Çıkış mesajına ve CSV'ye karar anı fiyatı, kural seviyesi ve dolum farkı.
+  - /durum'da süre eki "s" yerine "sa".
+  - Zararla kapanan KİLİT çıkışı stop sayacını sıfırlıyor (ai_bot.py:673-676); etkisi küçük.
