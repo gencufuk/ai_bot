@@ -959,3 +959,45 @@ Bu ek, 212'deki ilk laboratuvar çalıştırmasının sonuçları görülmeden y
   - rejimin yön bilmemesi.
 - **CSV:** İşlem dosyasına `rejim` ve `bilesen` sütunları eklendi. Trend ve yatay işlemler Excel'de bu sütunlarla süzülebilir.
 
+### 12.2 Sonuçlar (26 Ekim, 89 sunucusu)
+**Çalıştırma.** 78 parite (3 sabit coin çıkarıldı), girişler 2023-01-01 → 2026-10-01, 33.309 işlem. İki ayrı çalıştırma birebir aynı işlemleri verdi. Rapor: `veri/arastirma_2026-10-26/strateji_lab_rapor.txt`.
+
+**Karar kuralına göre 15 satırın hiçbiri geçmedi.**
+
+| Satır | Kuruluş beklenti | Sınama beklenti [P(>0)] | Sınama kazanma | 450 USDT, sınama (21 ay) |
+|---|---|---|---|---|
+| BOT_VEKILI (bugünkü botun vekili) | %−0.316 | %−0.227 [0.02] | %27.9 | −172.0 |
+| ERKEN_BIRIKIM (kullanıcının fikri) | %−0.315 | %−0.074 [0.36] | %31.5 | −7.2 |
+| ERKEN_BIRIKIM+AI | %−0.343 | %+0.399 [0.80] | %37.0 | +18.1 |
+| SIKISMA_KIRILIM+AI | %−0.348 | %+0.150 [0.71] | %33.9 | +25.3 |
+| TREND_DIP_RSI2 | %−0.044 | %−0.330 [0.00] | %50.2 | −329.2 |
+| YUKSEK_ISABET ("10'da 7") | %−0.333 | %−0.148 [0.15] | **%70.8** | −14.7 |
+| YATAY_DONUS (yatay yöntemi) | %−0.806 | %−0.866 [0.02] | %38.9 | −54.4 |
+| REJIM_KOMBO | %−0.686 | %−0.436 [0.05] | %34.4 | −61.0 |
+| REJIM_KOMBO_BOT | %−0.357 | %−0.278 [0.02] | %29.9 | −125.8 |
+| BTC_TREND | 5 işlem, %+40.3 | 4 işlem, %−0.771 | %25 | −0.6 |
+
+**Bulgular.**
+1. **Bugünkü botun yaklaşımı** iki dönemde de ve her rejimde zarar ettiriyor. 450 USDT ile sınamada 21 ayda −172 USDT; 2023–2024'te −277 USDT.
+2. **Kullanıcının "yükselmeden gir" fikri (ERKEN_BIRIKIM)** botun vekilinden çok daha az kaybettiriyor: sınamada −7, kuruluşta −39 USDT (botta −172 ve −277). Ama kârlı değil; 2025'te %+0.26, 2026'da %−0.53.
+3. **AI kâra çevirmiyor.**
+   - AUC 0.50–0.54, yani tahmin gücü yok denecek kadar az.
+   - ERKEN+AI ve SIKISMA+AI'nın sınamadaki artısı en iyi 5 işleme dayanıyor. Bu 5 işlem çıkarılınca beklenti %−0.04 ve %−0.01.
+   - İkisi de kuruluşta eksi. ERKEN+AI 2025'te %+0.90, 2026'da %−0.35: tutarlı değil.
+4. **"10'da 7" tutturuldu ama para kaybettirdi.**
+   - YUKSEK_ISABET sınamada %70.8 kazanma oranına ulaştı.
+   - Kazançlar ortalama %+1.27, kayıplar %−3.59. Başa baş için %73.9 kazanma gerekiyor.
+   - Sonuç işlem başına %−0.15.
+5. **Rejim (BOT_VEKILI, yıl yıl).**
+   - Düşen trend her yıl en kötüsü: %−0.60, −0.96, −0.59, −0.26.
+   - Yatay, yükselen trendden hiçbir yıl kötü değil: 2023 %+0.04 / −0.15, 2024 −0.19 / −0.45, 2025 −0.20 / −0.36, 2026 0.00 / +0.03.
+   - Yani "yatayda alma" kuralı veriyle desteklenmiyor, "düşüşte alma" destekleniyor. Yine de hiçbir rejimde kâr yok.
+   - Yatay için ortalamaya dönüş yöntemi en kötü sonuçlardan biri: işlem başına %−0.8.
+6. **BTC_TREND** 2023'te %+52.6, 2024'te %+21.8 kazandırdı. 2025 %+1.5, 2026 %−7.6; sınamada yalnız 4 işlem var ve kârlı değil.
+
+**Sonuç ve öneri.**
+- Test edilen gün içi spot yöntemlerinin hiçbiri (bugünkü bot, erken giriş, sıkışma, dip alımı, yüksek isabet, yatay yöntemi, rejime göre geçiş, AI süzgeci) 2023–2026'da komisyon sonrası kalıcı kâr göstermiyor.
+- Canlı al-sat durdurulmuş kalmalı.
+- Kademe2 doğrulamasına gerek kalmadı. KADEMELI çıkış bu laboratuvarda BOT_VEKILI'nin çıkışı ve iki dönemde de eksi; 2025'in 15 dakikalık simülasyonu da %−0.39 bulmuştu.
+- Kâr getirebilecek bir yöntem, gerçek parayla çalıştırılmadan önce aynı önceden kayıtlı kuralla ve en az birkaç ay kâğıt üzerinde (gerçek emir vermeden) denenmeli.
+

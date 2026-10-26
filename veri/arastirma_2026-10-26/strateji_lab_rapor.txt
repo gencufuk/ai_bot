@@ -1,0 +1,271 @@
+STRATEJİ LABORATUVARI | girişler 2023-01-01 → 2026-10-01 00:00 (çıkışlar 2026-10-08 00:00'e kadarki veriyle) | kuruluş/sınama ayrımı 2025-01-01 | 1 saatlik mumlar
+Evren: bugünün en hacimli 80 USDT paritesi + BTC; kullanılan 78 parite (sabit coin çıkarılan: 3, verisi olmayan: 0) | min hacim 5M, büyük hacim 20M USDT | API isteği: 1191 | süre 505 sn | sürümler: python 3.13.3, numpy 2.2.6, pandas 3.0.5, sklearn 1.9.0, xgboost 3.4.1
+Maliyet (k=1): komisyon %0.10/yön, kayma giriş %0.05 / stop %0.15 / zaman-sinyal %0.05; hedef (limit) kaymasız.
+Getiriler işlem başına net %; dönemlere GİRİŞ zamanına göre atanır. Bitişte açık kalan (hariç tutulan) işlem: BOT 0, ERKEN 0, SIKISMA 0, RSI2 0, ISABET 0, YATAY 0, KOMBO 0, KOMBO_B 0, BTC_TR 1
+
+0) KARAR KURALI (önceden kayıtlı; veriye bakılmadan yazıldı, aynen uygulanır):
+  Bir kural (ya da AI varyantı) ancak şu koşulların HEPSİ sağlanırsa "GEÇTİ" sayılır:
+  (1) sınama döneminde en az 100 işlem;
+  (2) sınama beklentisi (işlem başına ortalama net getiri) > 0 ve gün bloklu bootstrap P(>0) >= 0.99
+      (15 satır sınandığı için katı);
+  (3) kuruluş beklentisi > 0 (AI varyantlarında: modeli olan kuruluş aylarında);
+  (4) sınama aylarının (en az 1 işlemi olan takvim ayları) en az %60'ı pozitif;
+  (5) maliyet 2 katındayken (k=2) sınama beklentisi > 0.
+  AI varyantı ayrıca: AI karşılaştırmasında (aynı aylarda AI - kural beklentisi) P(fark>0) >= 0.90.
+  Aksi halde "KALDI" (sağlanmayan koşullar listelenir). Bilgi (koşul değil): sınama kazanma oranı >= %70
+  olanlar "10'da 7 hedefi" ile işaretlenir.
+
+1) KURALLAR — kuruluş ve sınama dönemi (beklenti = işlem başına ortalama net getiri; GA: gün bloklu bootstrap; kazan% ve poz.ay aşağı yuvarlanır; ∞: hiç kayıp yok; poz.ay: en az 1 işlemi olan aylar)
+   satır               dönem         n kazan% ort.kaz ort.kay   R:R    PF beklenti            %95 GA  P(>0) med.s k.seri      poz.ay
+   BOT_VEKILI          kuruluş    4390  27.4%  +5.03%  -2.34%  2.15  0.81  -0.316%    [-0.50, -0.14] 0.0000     5     43   16% (4/24)
+   BOT_VEKILI          sınama     3783  27.9%  +5.22%  -2.34%  2.23  0.87  -0.227%    [-0.43, -0.01] 0.0230     5     49   28% (6/21)
+   BOT_VEKILI+AI       kuruluş     888  27.7%  +4.69%  -2.34%  2.01  0.77  -0.392%    [-0.67, -0.10] 0.0040     5     24   41% (5/12)
+   BOT_VEKILI+AI       sınama     1570  27.2%  +5.09%  -2.34%  2.18  0.82  -0.314%    [-0.57, -0.03] 0.0180     6     38   38% (8/21)
+   ERKEN_BIRIKIM       kuruluş     627  29.3%  +4.55%  -2.34%  1.95  0.81  -0.315%    [-0.71, +0.11] 0.0665     8     19   33% (8/24)
+   ERKEN_BIRIKIM       sınama      488  31.5%  +4.85%  -2.34%  2.07  0.95  -0.074%    [-0.62, +0.52] 0.3640     9     20   23% (5/21)
+   ERKEN_BIRIKIM+AI    kuruluş     181  28.7%  +4.62%  -2.34%  1.97  0.79  -0.343%    [-0.99, +0.35] 0.1635     8     11   25% (3/12)
+   ERKEN_BIRIKIM+AI    sınama      227  37.0%  +5.07%  -2.34%  2.16  1.27  +0.399%    [-0.44, +1.26] 0.8020    14     13   42% (9/21)
+   SIKISMA_KIRILIM     kuruluş    1817  29.2%  +4.81%  -2.34%  2.06  0.85  -0.249%    [-0.56, +0.08] 0.0635    10     39   33% (8/24)
+   SIKISMA_KIRILIM     sınama     1958  31.2%  +4.97%  -2.34%  2.12  0.97  -0.055%    [-0.44, +0.35] 0.3845    11     90   42% (9/21)
+   SIKISMA_KIRILIM+AI  kuruluş     499  28.2%  +4.72%  -2.34%  2.01  0.79  -0.348%    [-0.84, +0.20] 0.1025    11     20   25% (3/12)
+   SIKISMA_KIRILIM+AI  sınama      843  33.9%  +5.00%  -2.34%  2.14  1.10  +0.150%    [-0.37, +0.72] 0.7080    12     57   52% (11/21)
+   TREND_DIP_RSI2      kuruluş    7069  57.0%  +1.04%  -1.48%  0.70  0.93  -0.044%    [-0.16, +0.06] 0.2080     3     21   20% (5/24)
+   TREND_DIP_RSI2      sınama     5133  50.2%  +0.87%  -1.54%  0.56  0.57  -0.330%    [-0.49, -0.18] 0.0000     4     27    9% (2/21)
+   TREND_DIP_RSI2+AI   kuruluş    1832  64.5%  +1.33%  -1.93%  0.69  1.26  +0.178%    [-0.03, +0.36] 0.9525     3     19   58% (7/12)
+   TREND_DIP_RSI2+AI   sınama     1774  54.9%  +1.11%  -1.93%  0.58  0.70  -0.259%    [-0.48, -0.07] 0.0020     4     22   14% (3/21)
+   YUKSEK_ISABET       kuruluş     636  65.7%  +1.28%  -3.42%  0.37  0.72  -0.333%    [-0.59, -0.07] 0.0045     4      7   25% (6/24)
+   YUKSEK_ISABET       sınama      497  70.8%  +1.27%  -3.59%  0.35  0.86  -0.148%    [-0.44, +0.12] 0.1505     5      6   33% (7/21)
+   YUKSEK_ISABET+AI    kuruluş     124  66.9%  +1.30%  -3.46%  0.38  0.76  -0.275%    [-0.75, +0.16] 0.1115     4      4   36% (4/11)
+   YUKSEK_ISABET+AI    sınama      162  70.9%  +1.27%  -4.07%  0.31  0.76  -0.281%    [-0.70, +0.14] 0.0850     4      4   42% (8/19)
+   YATAY_DONUS         kuruluş     308  42.8%  +1.92%  -2.85%  0.67  0.51  -0.806%    [-1.26, -0.28] 0.0005    11     12   29% (7/24)
+   YATAY_DONUS         sınama      313  38.9%  +2.22%  -2.84%  0.78  0.50  -0.866%    [-1.49, -0.10] 0.0170     9     22   28% (6/21)
+   YATAY_DONUS+AI      kuruluş      31  35.4%  +1.76%  -2.70%  0.65  0.36  -1.119%    [-1.84, +0.01] 0.0255    10      6   14% (1/7)
+   YATAY_DONUS+AI      sınama      110  34.5%  +2.51%  -2.96%  0.85  0.45  -1.071%    [-1.87, -0.05] 0.0200     9     21   37% (6/16)
+   REJIM_KOMBO         kuruluş     747  33.0%  +3.03%  -2.52%  1.20  0.59  -0.686%    [-0.99, -0.35] 0.0000    10     17   16% (4/24)
+   REJIM_KOMBO         sınama      697  34.4%  +3.59%  -2.55%  1.41  0.74  -0.436%    [-0.92, +0.08] 0.0480     9     28   19% (4/21)
+   REJIM_KOMBO_BOT     kuruluş    2576  29.8%  +4.44%  -2.39%  1.85  0.79  -0.357%    [-0.58, -0.13] 0.0005     5     26   25% (6/24)
+   REJIM_KOMBO_BOT     sınama     2261  29.9%  +4.68%  -2.40%  1.95  0.83  -0.278%    [-0.55, -0.01] 0.0220     6     31   42% (9/21)
+   BTC_TREND           kuruluş       5  60.0% +71.88%  -7.13% 10.09 15.13 +40.275%   [+2.23, +85.50] 0.9925  3456      1   60% (3/5)
+   BTC_TREND           sınama        4  25.0% +15.63%  -6.24%  2.51  0.84  -0.771%   [-7.02, +10.25] 0.2835   708      3   25% (1/4)
+
+2) YIL YIL — her hücre: beklenti % / kazanma % / n (girişin yılına göre)
+   satır                                 2023                   2024                   2025                   2026
+   BOT_VEKILI            -0.171% / 28% / 2020   -0.440% / 26% / 2370   -0.343% / 26% / 2317   -0.045% / 29% / 1466
+   BOT_VEKILI+AI                            -    -0.392% / 27% / 888    -0.480% / 25% / 977    -0.041% / 30% / 593
+   ERKEN_BIRIKIM          -0.275% / 29% / 240    -0.339% / 29% / 387    +0.255% / 35% / 283    -0.528% / 25% / 205
+   ERKEN_BIRIKIM+AI                         -    -0.343% / 28% / 181    +0.900% / 42% / 136     -0.351% / 28% / 91
+   SIKISMA_KIRILIM        +0.041% / 32% / 663   -0.416% / 27% / 1154   -0.033% / 31% / 1312    -0.101% / 31% / 646
+   SIKISMA_KIRILIM+AI                       -    -0.348% / 28% / 499    +0.011% / 33% / 574    +0.445% / 35% / 269
+   TREND_DIP_RSI2        -0.120% / 55% / 2592   -0.001% / 57% / 4477   -0.364% / 51% / 3579   -0.251% / 48% / 1554
+   TREND_DIP_RSI2+AI                        -   +0.178% / 64% / 1832   -0.344% / 52% / 1247    -0.058% / 60% / 527
+   YUKSEK_ISABET          -0.325% / 65% / 244    -0.338% / 66% / 392    -0.050% / 73% / 298    -0.294% / 67% / 199
+   YUKSEK_ISABET+AI                         -    -0.275% / 66% / 124     -0.183% / 74% / 89     -0.402% / 67% / 73
+   YATAY_DONUS            -0.772% / 45% / 153    -0.840% / 40% / 155    -0.611% / 42% / 189    -1.256% / 33% / 124
+   YATAY_DONUS+AI                           -     -1.119% / 35% / 31     -0.821% / 35% / 53     -1.302% / 33% / 57
+   REJIM_KOMBO            -0.610% / 35% / 331    -0.747% / 31% / 416    -0.224% / 37% / 415    -0.749% / 30% / 282
+   REJIM_KOMBO_BOT       -0.221% / 30% / 1207   -0.477% / 29% / 1369   -0.370% / 29% / 1342    -0.143% / 31% / 919
+   BTC_TREND               +52.622% / 66% / 3     +21.755% / 50% / 2      +1.514% / 33% / 3       -7.625% / 0% / 1
+
+3) MALİYET DUYARLILIĞI — sınama beklentisi (%), maliyet katsayısı k (komisyon ve kaymalar x k)
+   satır                   k=0.5       k=1       k=2
+   BOT_VEKILI            -0.021%   -0.227%   -0.627%
+   BOT_VEKILI+AI         -0.100%   -0.314%   -0.737%
+   ERKEN_BIRIKIM         +0.117%   -0.074%   -0.450%
+   ERKEN_BIRIKIM+AI      +0.579%   +0.399%   +0.012%
+   SIKISMA_KIRILIM       +0.162%   -0.055%   -0.455%
+   SIKISMA_KIRILIM+AI    +0.361%   +0.150%   -0.263%
+   TREND_DIP_RSI2        -0.178%   -0.330%   -0.630%
+   TREND_DIP_RSI2+AI     -0.105%   -0.259%   -0.560%
+   YUKSEK_ISABET         -0.017%   -0.148%   -0.427%
+   YUKSEK_ISABET+AI      -0.126%   -0.281%   -0.523%
+   YATAY_DONUS           -0.706%   -0.866%   -1.190%
+   YATAY_DONUS+AI        -0.909%   -1.071%   -1.393%
+   REJIM_KOMBO           -0.252%   -0.436%   -0.780%
+   REJIM_KOMBO_BOT       -0.062%   -0.278%   -0.666%
+   BTC_TREND             -0.622%   -0.771%   -1.068%
+
+4) BÜTÇE (450/90 USDT, işlem başına 20 USDT; slot doluysa sinyal atlanır; aylık ort. dönemin tüm takvim aylarına bölünür; poz.ay: kârlı ay / dönemin TÜM takvim ayları, işlemsiz ay pozitif sayılmaz — 1. bölümdeki poz.ay yalnız işlemli ayları sayar)
+   satır               bütçe dönem    alınan     toplam  aylık ort  poz.ay maks.düşüş
+   BOT_VEKILI            450 kuruluş    4390    -277.38     -11.56    4/24    -331.02
+   BOT_VEKILI            450 sınama     3783    -172.01      -8.19    6/21    -193.71
+   BOT_VEKILI             90 kuruluş    2744    -198.48      -8.27    5/24    -226.26
+   BOT_VEKILI             90 sınama     2175    -109.12      -5.20    5/21    -122.12
+   BOT_VEKILI+AI         450 kuruluş     888     -69.58      -2.90    5/24     -75.46
+   BOT_VEKILI+AI         450 sınama     1570     -98.55      -4.69    8/21    -114.88
+   BOT_VEKILI+AI          90 kuruluş     728     -52.38      -2.18    3/24     -57.76
+   BOT_VEKILI+AI          90 sınama     1138     -70.24      -3.34    7/21     -78.13
+   ERKEN_BIRIKIM         450 kuruluş     627     -39.48      -1.64    8/24     -49.12
+   ERKEN_BIRIKIM         450 sınama      488      -7.21      -0.34    5/21     -37.40
+   ERKEN_BIRIKIM          90 kuruluş     495     -29.20      -1.22   10/24     -39.58
+   ERKEN_BIRIKIM          90 sınama      350      -7.68      -0.37    6/21     -24.09
+   ERKEN_BIRIKIM+AI      450 kuruluş     181     -12.40      -0.52    3/24     -13.20
+   ERKEN_BIRIKIM+AI      450 sınama      227     +18.10      +0.86    9/21     -16.96
+   ERKEN_BIRIKIM+AI       90 kuruluş     157     -10.49      -0.44    4/24     -14.91
+   ERKEN_BIRIKIM+AI       90 sınama      193     +10.89      +0.52    9/21     -15.48
+   SIKISMA_KIRILIM       450 kuruluş    1784     -87.23      -3.63    8/24    -112.00
+   SIKISMA_KIRILIM       450 sınama     1861     -20.79      -0.99    9/21     -86.52
+   SIKISMA_KIRILIM        90 kuruluş     907     -57.44      -2.39    7/24     -69.40
+   SIKISMA_KIRILIM        90 sınama      751     -40.53      -1.93    7/21     -46.58
+   SIKISMA_KIRILIM+AI    450 kuruluş     499     -34.71      -1.45    3/24     -44.07
+   SIKISMA_KIRILIM+AI    450 sınama      839     +25.28      +1.20   11/21     -34.25
+   SIKISMA_KIRILIM+AI     90 kuruluş     335     -21.45      -0.89    3/24     -33.35
+   SIKISMA_KIRILIM+AI     90 sınama      487      -0.56      -0.03   11/21     -18.33
+   TREND_DIP_RSI2        450 kuruluş    6943     -89.57      -3.73    5/24    -172.68
+   TREND_DIP_RSI2        450 sınama     5007    -329.23     -15.68    2/21    -340.61
+   TREND_DIP_RSI2         90 kuruluş    3610    -107.87      -4.49    4/24    -131.50
+   TREND_DIP_RSI2         90 sınama     2530    -137.06      -6.53    1/21    -142.71
+   TREND_DIP_RSI2+AI     450 kuruluş    1816     +61.25      +2.55    7/24     -20.51
+   TREND_DIP_RSI2+AI     450 sınama     1766     -87.25      -4.15    3/21     -97.16
+   TREND_DIP_RSI2+AI      90 kuruluş    1164      -4.78      -0.20    5/24     -23.40
+   TREND_DIP_RSI2+AI      90 sınama     1171     -59.63      -2.84    3/21     -66.38
+   YUKSEK_ISABET         450 kuruluş     636     -42.33      -1.76    6/24     -47.61
+   YUKSEK_ISABET         450 sınama      497     -14.70      -0.70    7/21     -22.11
+   YUKSEK_ISABET          90 kuruluş     593     -33.88      -1.41    7/24     -39.39
+   YUKSEK_ISABET          90 sınama      435     -12.92      -0.62    7/21     -17.35
+   YUKSEK_ISABET+AI      450 kuruluş     124      -6.81      -0.28    4/24      -9.26
+   YUKSEK_ISABET+AI      450 sınama      162      -9.12      -0.43    8/21     -11.02
+   YUKSEK_ISABET+AI       90 kuruluş     123      -5.94      -0.25    4/24      -8.40
+   YUKSEK_ISABET+AI       90 sınama      158     -10.16      -0.48    8/21     -11.02
+   YATAY_DONUS           450 kuruluş     308     -49.68      -2.07    7/24     -49.91
+   YATAY_DONUS           450 sınama      312     -54.44      -2.59    6/21     -56.13
+   YATAY_DONUS            90 kuruluş     246     -44.11      -1.84    7/24     -44.37
+   YATAY_DONUS            90 sınama      201     -30.58      -1.46    6/21     -33.55
+   YATAY_DONUS+AI        450 kuruluş      31      -6.94      -0.29    1/24      -7.97
+   YATAY_DONUS+AI        450 sınama      110     -23.55      -1.12    6/21     -26.05
+   YATAY_DONUS+AI         90 kuruluş      29      -6.75      -0.28    1/24      -7.78
+   YATAY_DONUS+AI         90 sınama       85     -16.65      -0.79    6/21     -19.15
+   REJIM_KOMBO           450 kuruluş     747    -102.54      -4.27    4/24    -105.28
+   REJIM_KOMBO           450 sınama      696     -61.00      -2.90    4/21     -77.29
+   REJIM_KOMBO            90 kuruluş     599     -85.63      -3.57    1/24     -88.24
+   REJIM_KOMBO            90 sınama      466     -31.59      -1.50    4/21     -45.86
+   REJIM_KOMBO_BOT       450 kuruluş    2576    -184.13      -7.67    6/24    -216.09
+   REJIM_KOMBO_BOT       450 sınama     2260    -125.81      -5.99    9/21    -147.22
+   REJIM_KOMBO_BOT        90 kuruluş    1727    -134.16      -5.59    6/24    -152.00
+   REJIM_KOMBO_BOT        90 sınama     1326     -82.89      -3.95    6/21    -100.85
+   BTC_TREND             450 kuruluş       5     +40.28      +1.68    3/24      -1.60
+   BTC_TREND             450 sınama        4      -0.62      -0.03    1/21      -3.74
+   BTC_TREND              90 kuruluş       5     +40.28      +1.68    3/24      -1.60
+   BTC_TREND              90 sınama        4      -0.62      -0.03    1/21      -3.74
+
+5) AYLIK — sınama dönemi, 450 USDT bütçe, ay ay gerçekleşen USDT (girişin ayına göre; '-': o ay hiç işlem alınmadı)
+   Sütunlar: BOT=BOT_VEKILI, ERKEN=ERKEN_BIRIKIM, SIKISMA=SIKISMA_KIRILIM, RSI2=TREND_DIP_RSI2, ISABET=YUKSEK_ISABET, YATAY=YATAY_DONUS, KOMBO=REJIM_KOMBO, KOMBO_B=REJIM_KOMBO_BOT, BTC_TR=BTC_TREND; +AI: AI varyantı (YATAY sütunu YATAY_DONUS kuralıdır, BTC rejimi değil; rejime göre ayrım 8. bölümde)
+   ay             BOT     BOT+AI      ERKEN   ERKEN+AI    SIKISMA SIKISMA+AI       RSI2    RSI2+AI     ISABET  ISABET+AI      YATAY   YATAY+AI      KOMBO    KOMBO_B     BTC_TR
+   2025-01     -34.01     -19.16      +2.10      +3.05      +4.59      +3.30     -45.77     -23.21      -1.37      -0.44      -9.87      -2.45     -10.63     -30.06          -
+   2025-02     -24.07      -7.63      -1.21      -0.27     -17.09      -1.33     -13.02      -1.17      -0.96      -0.35      +0.46          -      -0.47      -1.30          -
+   2025-03     -13.36      -6.64      -0.96      -1.23      +2.99      +3.18     -40.63     -20.04      -1.41      -2.60      -9.00      -0.93      -9.02     -22.79          -
+   2025-04     -15.16     -21.31     +15.96     +12.74      -6.45      -0.88      +3.63     +12.74      +2.41      +0.08      +6.73      -2.05     +24.86      +2.89      +3.13
+   2025-05      -4.62      +2.44      -2.46      +0.15     -11.71      -6.12      -7.09      -9.20      +1.36      +1.82      -2.00          -      -2.98      -6.54          -
+   2025-06     -17.49      -8.50      -1.78      +1.29     -10.99     -14.95     -13.31     -14.42      -2.87      +1.04      -0.61      -0.73      -3.07      -7.88          -
+   2025-07     +21.76      +8.75      +9.91     +10.92     +40.10      +9.24     -60.07     -10.54      +1.27      -1.22      -0.79          -      -0.28      +9.77          -
+   2025-08     -15.63      -8.63      -1.91      -0.18     +30.48     +18.98     -16.94      -2.77      -2.53      +0.43      +1.52      +1.62      -0.68     +10.56          -
+   2025-09      +9.35      +8.32      +6.84      +4.71     +13.89      +9.53     -15.39      -4.30      +6.84      +1.90      +4.42      +4.09     +10.40      +4.12      -1.18
+   2025-10     -18.77     -15.34      -9.78      -4.69      -2.13      +4.87      -9.50      -2.50      -2.44      -1.82      -5.35      -3.02     -15.14     -24.86      -1.04
+   2025-11     -22.01     -12.19      -0.01      -0.47     -19.65      -5.84      -8.96      -0.39      -0.35          -      -7.48      -5.24      -7.49     -18.23          -
+   2025-12     -24.84     -13.83      -2.25      -1.54     -31.57     -18.62     -24.21      -5.37      -2.95      -2.08      -1.33          -      -4.27     -15.29          -
+   2026-01      -9.38      +3.44      -9.69      -3.08      +0.15      +0.69      -5.59      -2.08      -2.83      +0.25      -1.34      -0.67     -10.55      +6.65          -
+   2026-02     +11.53      +3.99      -1.41      -0.94      -8.00      -3.28      -7.39      -2.30      +0.78          -      -9.22      -4.20     -10.62      +5.85          -
+   2026-03      +3.68      -1.54      -4.41      -2.07      +5.60      +8.47     -25.48      -3.57      -1.39      -0.44     -17.87     -10.88     -21.15     -27.86          -
+   2026-04     -12.86     -17.07      -4.34      -3.72      -5.66      +1.89     -16.48      -1.71      +0.57      +0.25      -1.46          -      -4.50     -22.40      -1.53
+   2026-05      +4.73      +2.30      -1.03      +4.23      +4.19      +4.40      -6.58      -0.35      -3.65      -1.77      -0.64      +0.44      -0.95      +7.83          -
+   2026-06      -8.57      +3.48      -0.12      +0.31      -7.04      -7.96      -4.48      -1.98      -0.18      +0.26      -0.60      +0.59      +0.22      +3.94          -
+   2026-07     -13.14      -8.97      -2.63      -0.92     -13.46      -2.09     -11.63      -0.52      +0.30      -0.95      -1.02      -1.01      -2.84     -16.89          -
+   2026-08     +28.85     +15.62      +8.99      +2.96     +22.81     +23.39      +0.16      +0.96      -2.22      -1.82      +0.41      +0.73     +14.55     +30.75          -
+   2026-09     -18.01      -6.09      -7.02      -3.18     -11.85      -1.58      -0.49      +5.47      -3.09      -1.65      +0.60      +0.15      -6.40     -14.09          -
+
+6) AI — ay ay ileri yürüyen model (M ayı yalnız M'den önce kapanmış işlemlerle); karşılaştırma sınama döneminin modelli aylarında, aynı işlemler üzerinde
+   BOT_VEKILI       modelli ay 33/33 | AUC kuruluş 0.513 sınama 0.501 | sınama: kural n=3783 -0.227%, AI n=1570 -0.314% | fark -0.087% [-0.250, +0.079] P(>0)=0.1600
+   ERKEN_BIRIKIM    modelli ay 33/33 | AUC kuruluş 0.500 sınama 0.536 | sınama: kural n=488 -0.074%, AI n=227 +0.399% | fark +0.473% [-0.004, +0.939] P(>0)=0.9740
+   SIKISMA_KIRILIM  modelli ay 33/33 | AUC kuruluş 0.499 sınama 0.531 | sınama: kural n=1958 -0.055%, AI n=843 +0.150% | fark +0.205% [-0.141, +0.538] P(>0)=0.8740
+   TREND_DIP_RSI2   modelli ay 33/33 | AUC kuruluş 0.588 sınama 0.568 | sınama: kural n=5133 -0.330%, AI n=1774 -0.259% | fark +0.071% [-0.058, +0.196] P(>0)=0.8670
+   YUKSEK_ISABET    modelli ay 33/33 | AUC kuruluş 0.518 sınama 0.511 | sınama: kural n=497 -0.148%, AI n=162 -0.281% | fark -0.134% [-0.459, +0.185] P(>0)=0.2080
+   YATAY_DONUS      modelli ay 29/33 | AUC kuruluş 0.458 sınama 0.416 | sınama: kural n=313 -0.866%, AI n=110 -1.071% | fark -0.204% [-0.889, +0.499] P(>0)=0.2860
+
+7) KARAR (önceden kayıtlı kural; ayrıntı 0. bölümde)
+   BOT_VEKILI          KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   BOT_VEKILI+AI       KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0; (6) AI karşılaştırması P(fark>0) >= 0.90
+   ERKEN_BIRIKIM       KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   ERKEN_BIRIKIM+AI    KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif
+   SIKISMA_KIRILIM     KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   SIKISMA_KIRILIM+AI  KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0; (6) AI karşılaştırması P(fark>0) >= 0.90
+   TREND_DIP_RSI2      KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   TREND_DIP_RSI2+AI   KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0; (6) AI karşılaştırması P(fark>0) >= 0.90
+   YUKSEK_ISABET       KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0  [10'da 7 hedefi: sınama kazanma >= %70]
+   YUKSEK_ISABET+AI    KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0; (6) AI karşılaştırması P(fark>0) >= 0.90  [10'da 7 hedefi: sınama kazanma >= %70]
+   YATAY_DONUS         KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   YATAY_DONUS+AI      KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0; (6) AI karşılaştırması P(fark>0) >= 0.90
+   REJIM_KOMBO         KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   REJIM_KOMBO_BOT     KALDI  — sağlanmayan: (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (3) kuruluş beklentisi > 0; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   BTC_TREND           KALDI  — sağlanmayan: (1) sınama n >= 100; (2) sınama beklentisi > 0 ve bootstrap P(>0) >= 0.99; (4) sınama aylarının >= %60'ı pozitif; (5) k=2 maliyetle sınama beklentisi > 0
+   SONUÇ: 15 satırdan 0 tanesi GEÇTİ.
+
+8) REJİM — girişteki BTC rejimine göre (bilgi amaçlı; karar kuralını değiştirmez). Rejim karar mumunda: BTC 1s ADX14 >= 20 ve kapanış > EMA200 TREND_YUKARI; ADX14 >= 20 ve kapanış <= EMA200 TREND_ASAGI; ADX14 < 20 YATAY; GA ve P(>0) gün bloklu bootstrap
+   Saatlerin rejim dağılımı: kuruluş TREND_YUKARI %37.4, TREND_ASAGI %30.6, YATAY %31.9, BILINMIYOR %0.1 (17544 saat) | sınama TREND_YUKARI %35.0, TREND_ASAGI %34.0, YATAY %30.9 (15312 saat)
+   satır               dönem    rejim             n kazan% beklenti            %95 GA  P(>0)
+   BOT_VEKILI          kuruluş  TREND_YUKARI   1976  27.5%  -0.315%    [-0.56, -0.06] 0.0045
+   BOT_VEKILI          kuruluş  TREND_ASAGI     799  23.7%  -0.778%    [-1.08, -0.48] 0.0000
+   BOT_VEKILI          kuruluş  YATAY          1615  29.1%  -0.089%    [-0.36, +0.22] 0.2705
+   BOT_VEKILI          sınama   TREND_YUKARI   1683  27.7%  -0.207%    [-0.48, +0.07] 0.0935
+   BOT_VEKILI          sınama   TREND_ASAGI     759  24.2%  -0.447%    [-0.82, +0.02] 0.0300
+   BOT_VEKILI          sınama   YATAY          1341  30.3%  -0.129%    [-0.43, +0.17] 0.1955
+   ERKEN_BIRIKIM       kuruluş  TREND_YUKARI    431  26.6%  -0.565%    [-0.97, -0.11] 0.0060
+   ERKEN_BIRIKIM       kuruluş  TREND_ASAGI       0
+   ERKEN_BIRIKIM       kuruluş  YATAY           196  35.2%  +0.235%    [-0.56, +1.06] 0.7125
+   ERKEN_BIRIKIM       sınama   TREND_YUKARI    382  30.8%  -0.082%    [-0.73, +0.65] 0.3750
+   ERKEN_BIRIKIM       sınama   TREND_ASAGI       0
+   ERKEN_BIRIKIM       sınama   YATAY           106  33.9%  -0.043%    [-0.91, +0.99] 0.4440
+   SIKISMA_KIRILIM     kuruluş  TREND_YUKARI   1013  27.7%  -0.414%    [-0.81, -0.00] 0.0235
+   SIKISMA_KIRILIM     kuruluş  TREND_ASAGI       0
+   SIKISMA_KIRILIM     kuruluş  YATAY           804  31.0%  -0.041%    [-0.51, +0.42] 0.4280
+   SIKISMA_KIRILIM     sınama   TREND_YUKARI   1217  31.6%  -0.075%    [-0.54, +0.45] 0.3875
+   SIKISMA_KIRILIM     sınama   TREND_ASAGI       0
+   SIKISMA_KIRILIM     sınama   YATAY           741  30.6%  -0.022%    [-0.56, +0.53] 0.4490
+   TREND_DIP_RSI2      kuruluş  TREND_YUKARI   4399  57.7%  -0.015%    [-0.14, +0.12] 0.4275
+   TREND_DIP_RSI2      kuruluş  TREND_ASAGI       0
+   TREND_DIP_RSI2      kuruluş  YATAY          2666  55.8%  -0.093%    [-0.29, +0.09] 0.1575
+   TREND_DIP_RSI2      kuruluş  BILINMIYOR        4  50.0%  +0.333%    [+0.33, +0.33] 1.0000
+   TREND_DIP_RSI2      sınama   TREND_YUKARI   3603  51.2%  -0.284%    [-0.47, -0.11] 0.0005
+   TREND_DIP_RSI2      sınama   TREND_ASAGI       0
+   TREND_DIP_RSI2      sınama   YATAY          1530  47.6%  -0.439%    [-0.71, -0.21] 0.0000
+   YUKSEK_ISABET       kuruluş  TREND_YUKARI    440  62.5%  -0.459%    [-0.76, -0.15] 0.0010
+   YUKSEK_ISABET       kuruluş  TREND_ASAGI       0
+   YUKSEK_ISABET       kuruluş  YATAY           196  72.9%  -0.050%    [-0.46, +0.36] 0.4250
+   YUKSEK_ISABET       sınama   TREND_YUKARI    387  69.7%  -0.189%    [-0.55, +0.14] 0.1320
+   YUKSEK_ISABET       sınama   TREND_ASAGI       0
+   YUKSEK_ISABET       sınama   YATAY           110  74.5%  -0.002%    [-0.49, +0.44] 0.5135
+   YATAY_DONUS         kuruluş  TREND_YUKARI      0
+   YATAY_DONUS         kuruluş  TREND_ASAGI       0
+   YATAY_DONUS         kuruluş  YATAY           308  42.8%  -0.806%    [-1.26, -0.28] 0.0005
+   YATAY_DONUS         sınama   TREND_YUKARI      0
+   YATAY_DONUS         sınama   TREND_ASAGI       0
+   YATAY_DONUS         sınama   YATAY           313  38.9%  -0.866%    [-1.49, -0.10] 0.0170
+   REJIM_KOMBO         kuruluş  TREND_YUKARI    442  26.2%  -0.600%    [-0.99, -0.18] 0.0050
+   REJIM_KOMBO         kuruluş  TREND_ASAGI       0
+   REJIM_KOMBO         kuruluş  YATAY           305  42.9%  -0.811%    [-1.27, -0.29] 0.0000
+   REJIM_KOMBO         sınama   TREND_YUKARI    385  30.9%  -0.084%    [-0.73, +0.63] 0.3765
+   REJIM_KOMBO         sınama   TREND_ASAGI       0
+   REJIM_KOMBO         sınama   YATAY           312  38.7%  -0.871%    [-1.52, -0.17] 0.0090
+   REJIM_KOMBO_BOT     kuruluş  TREND_YUKARI   2277  28.0%  -0.297%    [-0.53, -0.05] 0.0095
+   REJIM_KOMBO_BOT     kuruluş  TREND_ASAGI       0
+   REJIM_KOMBO_BOT     kuruluş  YATAY           299  43.4%  -0.818%    [-1.30, -0.27] 0.0005
+   REJIM_KOMBO_BOT     sınama   TREND_YUKARI   1954  28.5%  -0.189%    [-0.47, +0.08] 0.0950
+   REJIM_KOMBO_BOT     sınama   TREND_ASAGI       0
+   REJIM_KOMBO_BOT     sınama   YATAY           307  39.0%  -0.845%    [-1.55, -0.09] 0.0145
+   BTC_TREND           kuruluş  TREND_YUKARI      5  60.0% +40.275%   [+2.23, +85.50] 0.9925
+   BTC_TREND           kuruluş  TREND_ASAGI       0
+   BTC_TREND           kuruluş  YATAY             0
+   BTC_TREND           sınama   TREND_YUKARI      4  25.0%  -0.771%   [-7.02, +10.25] 0.2835
+   BTC_TREND           sınama   TREND_ASAGI       0
+   BTC_TREND           sınama   YATAY             0
+
+Kurallar: BOT_VEKILI: 12M+ hacimli en çok yükselen 10 içinde, EMA20 üstü, ATR<=%3, RSI14>55, hacim 2.5x; KADEMELI | ERKEN_BIRIKIM: 24s -%3..+%6, EMA50 üstü ve EMA20>EMA50, RSI14 50-68, 6 saatlik hacim birikimi 2x, 24s zirve kırılımı, BTC EMA200 üstü; KADEMELI | SIKISMA_KIRILIM: Bollinger genişliği 30 günün en dar %20si, üst bant kırılımı, hacim 2x, 24s <= %8; KADEMELI | TREND_DIP_RSI2: büyük hacimli, EMA200 üstü, RSI2<10 dip alımı; SMA5 üstü kapanışta çık, stop -%7, 48 saat | YUKSEK_ISABET: ERKEN_BIRIKIM girişleri; +%1.5 hedef / -%4 stop / 24 saat | YATAY_DONUS: BTC rejimi YATAY, coin ADX14<20, kapanış Bollinger alt bandı (SMA20-2σ) altında, RSI14<30, 24s hacim yeterli; ORTA_BANT: kapanış >= SMA20 olan ilk mumda çık, stop -%3, 24 saat | REJIM_KOMBO: TREND_YUKARI: ERKEN_BIRIKIM (KADEMELI), YATAY: YATAY_DONUS (ORTA_BANT), TREND_ASAGI: alım yok; paritede tek pozisyon iki bileşen için birlikte | REJIM_KOMBO_BOT: REJIM_KOMBO gibi, trend bileşeni BOT_VEKILI (bugünkü botun vekili) | BTC_TREND: BTC günlük kapanış MA100x1.02 üstü al, MA100x0.98 altı sat
+AI varyantı: <KURAL>+AI = kuralın, o ayın modelinin eşiğini geçen işlemleri (kombolarda ve BTC_TREND'de AI yok).
+Bilinen sınırlar:
+  - Evren bugünün en hacimli paritelerinden oluşur; dönem içinde delist olanlar yok (hayatta kalma yanlılığı, sonuçlar iyimser).
+  - 1 saatlik mum içi yol yaklaşıktır: yeşil mumda önce dip, kırmızıda önce tepe varsayılır.
+  - AI süzgeci işlem listesine sonradan uygulanır; süzülen işlemin engellediği sinyaller geri gelmez.
+  - BOT_VEKILI canlı botun 1 saatlik vekilidir; bot 15 dakikalık mumlarla ve kendi çıkışlarıyla çalışır.
+  - Uzun pencereler (168/720 saat) eksik saatlere karşı en az %90 dolulukla hesaplanır; parite ilk sinyalden önce en az 720 dolu saat ister. EMA/ATR/RSI/ADX eksik saati atlar; RSI ve ADX son n+1 saatin hepsi doluysa hesaplanır (rejim yoksa BILINMIYOR: rejime bağlı sinyal yok).
+  - İşlem içindeki eksik saatler: atlanır ama tutma süresine sayılır, sonraki mumun açılışı boşluk sayılır (stop altındaysa oradan dolar); azami sürenin son mumu eksikse sonraki ilk açılıştan çıkılır; SMA5/SMA20 eksikken RSI2/ORTA_BANT sinyal çıkışı yoktur.
+  - Veri sonu: yalnız azami tutma süresi (168/24/48 saat; kombolarda işlemin bileşeninin çıkışına göre) veride kalan girişler alınır, böylece veri sonundaki işlemler sonuçlarına göre elenmez; --bitis verilmezse analiz son tamamlanmış takvim ayında biter. BTC_TREND'de veri sonunda açık kalan işlem hariçtir.
+  - Rejim BTC'nin 1 saatlik ADX14'üyle belirlenir (canlı bot 15 dakikalık ADX kullanır); eşik (20) ve kombo eşlemesi veriden değil, baştan teoriye göre seçildi (ANALIZ §12.1).
+  - Sabit coin kararı paritenin ilk 720 dolu saatiyle verilir (ilk olası sinyalden önce; geleceğe bakmaz).
