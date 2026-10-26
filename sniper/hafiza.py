@@ -1,9 +1,22 @@
 # -*- coding: utf-8 -*-
-"""MAKİNE HAFIZASI: SQLite veritabanı (şema, göçler, yazma/okuma, saklama süresi), tek kopya kilidi, Binance ham
-1 saatlik mum toplayıcı ve evren seçimi. makine.py (tarayıcı + kâğıt işlem + etiket + rapor) bunun üstüne kurulur.
+"""MAKİNE HAFIZASI: SQLite veritabanı (şema, göçler, yazma/okuma, saklama süresi, rapor sorguları), tek kopya
+kilidi, Binance ham 1 saatlik mum toplayıcı (+ emir defteri anlık görüntüsü) ve evren seçimi. makine.py (tarayıcı +
+kâğıt işlem + etiket + rapor) bunun üstüne kurulur.
 
-GÜVENLİK: bu modül yalnız herkese açık uç noktaları çağırır (publicGetKlines, load_markets/market). Emir, bakiye ya
-da API anahtarı kullanan hiçbir çağrı yoktur; borsa nesnesi anahtarsız kurulmalıdır (makine.py).
+GÜVENLİK: bu modül yalnız herkese açık uç noktaları çağırır (publicGetKlines, fetch_order_book, load_markets/market).
+Emir, bakiye ya da API anahtarı kullanan hiçbir çağrı yoktur; borsa nesnesi anahtarsız kurulmalıdır (makine.py).
+
+Bir turda kullanım sırası (makine.py; t = yeni kapanan karar mumunun açılışı, simdi ~ t + 1 saat + 20 sn):
+  h.kacirilanlari_yaz(t, ...)                         kapalıyken geçen karar saatleri KACIRILDI
+  ev = evren_sec(ex.fetch_tickers(), ..., korunan=h.korunacak_pariteler(simdi))
+  MumToplayici(ex, h).guncelle(ev.guncellenecek, simdi)
+  kalan, sabit, verisiz = h.sabit_ayikla(ev.semboller)   strateji_lab gibi evren küçülür (sıra korunur)
+  izg = h.izgaralar(kalan + korunan, t)               PENCERE saatlik ızgaralar -> strateji_lab göstergeleri/sinyalleri,
+                                                      aday_ozellikleri, mo.radar_siralari; kâğıt işlemler (mum_durumu,
+                                                      cikis_simule ile durumsuz yeniden simülasyon)
+  h.aday_yaz(...); toplayici.defter_topla(ilginc_sec(satirlar), t, simdi); h.etiketle(simdi); h.tarama_yaz(...)
+  h.gunluk_temizlik(simdi, aday_gun)
+Rapor: kagit_ozeti, dedektor_karnesi, sinyal_sayilari, tarama_ozeti, olaylar, sayimlar, boyut.
 
 Veritabanı (tek dosya, tek bağlantı): WAL günlüğü, synchronous=NORMAL, busy_timeout, yeni dosyada
 auto_vacuum=INCREMENTAL (silmelerden sonra incremental_vacuum ile disk geri verilir). Şema sürümü 'meta'
@@ -18,31 +31,52 @@ dosya açılmaz). Tablolar (ayrıntı GOCLER'de):
   kagit_islem  kâğıt işlemler (BEKLIYOR / ACIK / KAPALI / ATLANDI)
   tarama       her karar saati için tur kaydı (TAMAM / KACIRILDI / HATA)
   olay         hata ve uyarı günlüğü (rapor ve uyarı sınırlaması için)
+  tanim        tanım sürümleri (2. göç): özellik/etiket/kural tanımlarının ve parametrelerin özeti; aday, etiket,
+               kagit_islem ve tarama satırları yazıldıkları andaki tanımın kimliğini (tanim_id) taşır
 Zamanlar UTC milisaniye; ts her yerde 1 saatlik mumun AÇILIŞ zamanıdır (karar mumu t = yeni kapanan mum).
 
 Kapsam (parite.kapsam_ts): bu açılış zamanından ÖNCEKİ bütün kapanmış mumlar borsadan çekilmiştir; o aralıkta mum
 tablosunda olmayan saat borsada da yoktur (kalıcı boşluk: bakım, işlem durması). Toplayıcı yalnız ileri doğru çeker
-(kapsam_ts'den şimdiye), bu yüzden kapsam ancak borsa yanıtında görülen son mumun saatine kadar ilerler: borsa son
-kapanmış mumu henüz vermediyse (gecikme) o saat boşluk sayılmaz, sonraki turda yeniden istenir. Etiket ve kâğıt
-işlem "mum eksik mi, yoksa henüz gelmedi mi" sorusunu bununla yanıtlar.
+(kapsam_ts'den şimdiye), bu yüzden kapsam ancak borsa yanıtında görülen son KAPANMIŞ mumun arkasına (ya da yanıttaki
+kapanmamış mumun saatine) kadar ilerler: borsa son kapanmış mumu henüz vermediyse (gecikme) o saat boşluk sayılmaz,
+sonraki turda yeniden istenir. Etiket ve kâğıt işlem "mum eksik mi, yoksa henüz gelmedi mi" sorusunu bununla
+yanıtlar (mum_durumu, etiket_bekleyenler). Geri doldurma işlemsiz paritede en çok PENCERE saat geriye gider; parite
+PENCERE'den uzun süre çekilmeyip geri dönerse aradaki eski saatler hiç çekilmez ve kalıcı boşluk gibi davranılır
+(yalnız o eski saatlerin etiketleri NULL olur). BEKLIYOR/ACIK kâğıt işlemi olan paritede ise geri doldurma, kesinti
+ne kadar uzun olursa olsun (en çok ISLEM_GERI_AZAMI_GUN), işlemin girişinden ISLEM_ONCESI_SAAT önceye kadar iner:
+giriş mumu ve çıkış için gereken bütün mumlar gerçekten çekilir (PENCERE'den uzun kesintide de işlem doğru kapanır).
+
+Kapanmış mum (KAPANIS_PAYI_MS): bir mum, yerel saatte kapanmış olmasının (açılış + 1 saat <= şimdi) yanında ya aynı
+yanıtta ardından daha yeni bir mum geldiyse (Binance, startTime sunucu saatinden önceyse sürmekte olan mumu da
+döndürür: ardından mum gelen mum borsada kapanmıştır) ya da kapanışının üzerinden KAPANIS_PAYI_MS geçtiyse kapanmış
+sayılır. Böylece yerel saat borsadan ileri olduğunda (ya da borsanın kline akışı geciktiğinde) borsada hâlâ açık
+olan karar mumu kısmi değerlerle kalıcı olarak saklanmaz; kapsam onun saatinde kalır ve mum sonra yeniden istenir.
 
 Mum toplayıcı (MumToplayici; Binance ham klines): ex.publicGetKlines({'symbol': market_id, 'interval': '1h',
 'startTime': ms, 'limit': n}) 12 alan döndürür: açılış zamanı, o, h, l, c, v (baz), kapanış zamanı, qv (USDT),
-işlem adedi, alıcı baz hacmi, alıcı USDT hacmi, yok sayılan. Yalnız kapanmış mumlar (açılış + 1 saat <= şimdi)
-saklanır; aynı mum yeniden gelirse üzerine yazılır (idempotent). Bir parite ilk görüldüğünde PENCERE (1500) saatlik
-geçmiş sayfalanarak (1000'lik) çekilir; sonra yalnız kapsamdan şimdiye (makine kapalıyken oluşan boşluk da en çok
-PENCERE saat geriye doldurulur). Ağ hatası / borsa erişilemez / istek sınırı / zaman aşımı: 2, 4, 8 sn bekleyip
-yeniden dener (DENEME = 4 istek); yine olmazsa parite bu tur atlanır ve günlüğe yazılır (tur ölmez). Üst üste
+işlem adedi, alıcı baz hacmi, alıcı USDT hacmi, yok sayılan. Yalnız kapanmış mumlar (yukarıdaki kural) saklanır; aynı
+mum yeniden gelirse üzerine yazılır (idempotent). Bir parite ilk görüldüğünde PENCERE (1500) saatlik geçmiş
+sayfalanarak (1000'lik) çekilir; sonra yalnız kapsamdan şimdiye (makine kapalıyken oluşan boşluk da doldurulur:
+yukarıdaki sınırlarla). Ağ hatası / borsa erişilemez / istek sınırı (429) / zaman aşımı: 2, 4, 8 sn bekleyip yeniden
+dener (DENEME = 4 istek); yine olmazsa parite bu tur atlanır ve günlüğe yazılır (tur ölmez). Üst üste
 ARDISIK_HATA_SINIRI paritede ağ hatası olursa (borsa ya da ağ çökmüş) kalan pariteler bu tur denenmez: aksi halde
-150 parite x 14 sn bekleme turu bir saati aşardı. BadSymbol (delist / bilinmeyen sembol): piyasalar turda bir kez
-yeniden yüklenip denenir, olmazsa parite 'YOK' işaretlenir ve YOK_BEKLEME (24 saat) boyunca denenmez.
+150 parite x 14 sn bekleme turu bir saati aşardı. İstek sınırı (IP canlı botla ortak): 418 (DDoSProtection, IP
+yasağı) hiç yeniden denenmez; 418'de ya da denemeleri tükenen 429'da toplayıcı, yanıttaki Retry-After kadar (yoksa
+YASAK_BEKLEME_SN / SINIR_BEKLEME_SN) HİÇ istek göndermez (sınır_bitis_ms; kalan pariteler 'atlanan', ticker isteği
+IstekSiniri verir): yeniden denemeyle yasak uzamasın. BadSymbol (delist / bilinmeyen sembol): piyasalar turda bir
+kez yeniden yüklenip denenir, olmazsa parite 'YOK' işaretlenir ve YOK_BEKLEME (24 saat) boyunca denenmez.
 
 Evren (evren_sec, saf işlev; fetch_tickers sonucu): USDT spot, ASCII sembol, backfill_sinyaller.YASAKLI_COINLER
 (strateji_lab/backfill ile aynı alt dizgi kuralı), kaldıraçlı token değil (UP/DOWN/BULL/BEAR eki VE eksiz kısmı
 başka bir USDT paritesinin bazı: BTCUP çıkar, JUP/SYRUP kalır), 24s quoteVolume >= min_hacim; en hacimli n + her
 zaman BTC/USDT. Sıra strateji_lab ile aynı: BTC önce, sonra (quoteVolume, sembol) azalan (bf.evren_sec); radarın
-eşitlik bozması sütun sırasına bağlıdır. Sabit coinler strateji_lab gibi ilk n SEÇİLDİKTEN SONRA çıkarılır.
-Açık kâğıt işlemi olan pariteler evrenden çıksa da mumları güncellenir (guncellenecek).
+eşitlik bozması sütun sırasına bağlıdır. Sabit coinler strateji_lab gibi ilk n SEÇİLDİKTEN SONRA çıkarılır
+(sabit_ayikla, mumlar çekildikten sonra; ya da bilinen sabitler evren_sec(haric=...) ile: sonuç aynı). evren_sira
+(Evren.sira): kurallara uyan bütün pariteler (BTC dahil, sabitler dahil) içinde quoteVolume sırası.
+Açık kâğıt işlemi olan ve etiketi tamamlanmamış pariteler evrenden çıksa da mumları güncellenir (korunacak_pariteler
+-> korunan -> guncellenecek; etiket için: son aday satırının t+24 mumu çekilene kadar, kesintiden sonra da). Emir
+defteri (MumToplayici.defter_topla) yalnız ilginc_sec'in seçtiği en çok DEFTER_AZAMI paritede (sinyal ya da
+vol_ratio14 > 2 ya da |ret1| > %2; önce sinyalliler, sonra vol_ratio14 azalan).
 Sabit coin (Hafiza.sabit_karari): strateji_lab kuralı, paritenin veritabanındaki ilk 720 dolu saatinin saatlik
 getiri std'si < SABIT_COIN_STD (BTC asla). 720 dolu saat birikince karar kalıcı yazılır; öncesinde eldeki saatlerle
 geçici karar verilir (strateji_lab'ın kısa geçmişli pariteye yaptığı gibi). Fark: strateji_lab ilk 720 saati kendi
@@ -57,6 +91,7 @@ başından etkilenir: EMA200'ün başlangıç etkisi (1 - 2/201)^k göreli, k = 
 farklı çıkabilir (tests/test_makine.py tam geçmişle karşılaştırır). 'gecmis' (>= 720 dolu saat) pencere içinde
 sayılır: pencerede 720'den az dolu saati olan eski parite (uzun işlem durması) sinyal vermez.
 """
+import hashlib
 import json
 import logging
 import math
@@ -88,10 +123,21 @@ PENCERE = 1500                  # bellekteki kayan pencere ve ilk geçmiş (saat
 SAYFA = 1000                    # klines sayfa boyu (Binance üst sınırı)
 DENEME = 4                      # ağ hatasında toplam istek sayısı (2, 4, 8 sn bekleme)
 ARDISIK_HATA_SINIRI = 5         # üst üste bu kadar paritede ağ hatası: turun kalan pariteleri denenmez
+KAPANIS_PAYI_MS = 5 * 60_000    # ardından mum gelmeyen mum kapanışından bu kadar sonra kapanmış sayılır (saat sapması)
+ISLEM_ONCESI_SAAT = 48          # kâğıt işlemin kendi ızgarası girişten bu kadar saat önce başlar (SMA20 ısınması)
+ISLEM_GERI_AZAMI_GUN = 400      # açık işlemli paritede geri doldurma en çok bu kadar gün geriye iner
+YASAK_BEKLEME_SN = 600          # 418 (IP yasağı) sonrası Retry-After yoksa hiç istek gönderilmeyen süre
+SINIR_BEKLEME_SN = 120          # denemeleri tükenen 429 sonrası Retry-After yoksa aynı bekleme
 YOK_BEKLEME_MS = GUN_MS         # BadSymbol alan parite bu süre denenmez
 MUM_EK_GUN = 70                 # mum saklama = aday_gun + bu (>= PENCERE 62.5 gün)
 OLAY_GUN = 90                   # olay saklama
-ETIKET_GERI_GUN = 14            # bu kadar günden eski etiketsiz aday satırına bakılmaz (paritesi evrenden çıkmış)
+ETIKET_GERI_GUN = -(-PENCERE // 24) + 2   # 65: bundan eski etiketsiz aday satırına bakılmaz. Geri doldurma ufku
+                                # (PENCERE saat) + 1 gün: uzun kesintiden sonra doldurulan mumlarla eski satırlar da
+                                # etiketlenir; daha eskisinin mumu hiç gelmez (paritesi evrenden çıkmış). 65 günlük
+                                # tarama 150 paritede ~0.1 sn (PK aralığı + iki PK araması)
+DEFTER_LIMIT = 100              # fetch_order_book seviye sayısı (Binance ağırlığı 5)
+DEFTER_AZAMI = 30               # turda en çok bu kadar paritenin emir defteri (--defter-max)
+ILGINC_HACIM, ILGINC_RET1 = 2.0, 0.02     # ilginç parite: vol_ratio14 > 2 ya da |ret1| > %2 (ya da sinyal)
 AG_HATALARI = (ccxt.NetworkError, ccxt.ExchangeNotAvailable, ccxt.RateLimitExceeded, ccxt.RequestTimeout)
 KALDIRACLI_EKLER = ('UP', 'DOWN', 'BULL', 'BEAR')
 KAGIT_DURUMLARI = ('BEKLIYOR', 'ACIK', 'KAPALI', 'ATLANDI')
@@ -160,9 +206,28 @@ GOCLER: List[Tuple[int, str, List[str]]] = [
              id INTEGER PRIMARY KEY, ms INTEGER NOT NULL, tur TEXT NOT NULL, sembol TEXT, mesaj TEXT)""",
         """CREATE INDEX olay_ms ON olay (ms)""",
     ]),
+    (2, 'tanım sürümü, aday satırının karar mumu bayrağı ve oluşturma zamanı, paritenin son aday satırı', [
+        """CREATE TABLE tanim (
+             id INTEGER PRIMARY KEY,
+             ozet TEXT NOT NULL UNIQUE,        -- icerik'in sha256'sının ilk 16 hanesi
+             icerik TEXT NOT NULL,             -- JSON: elle artırılan sürüm, kaynak dosya özetleri, parametreler
+             ilk_ms INTEGER NOT NULL)          -- bu tanımın ilk kullanıldığı an""",
+        # karar_mumu: 1 karar mumu var, 0 yok (alınamadı / işlem durdu; özellikler NULL); NULL = 1. sürüm satırı
+        "ALTER TABLE aday ADD COLUMN karar_mumu INTEGER",
+        # olusturma_ms: satırı yazan turun başlangıcı (geç turun satırı: olusturma_ms - ts - 1 saat > 15 dk; evren ve
+        # evren_sira o andaki 24s ticker hacminden: geç turda karar mumundan sonraki işlemleri de içerir)
+        "ALTER TABLE aday ADD COLUMN olusturma_ms INTEGER",
+        "ALTER TABLE aday ADD COLUMN tanim_id INTEGER",
+        "ALTER TABLE etiket ADD COLUMN tanim_id INTEGER",
+        "ALTER TABLE kagit_islem ADD COLUMN tanim_id INTEGER",
+        "ALTER TABLE tarama ADD COLUMN tanim_id INTEGER",
+        # son_aday_ts: paritenin son aday satırı (etiketi bekleyen pariteler evrenden çıksa da çekilsin)
+        "ALTER TABLE parite ADD COLUMN son_aday_ts INTEGER",
+        "UPDATE parite SET son_aday_ts = (SELECT MAX(a.ts) FROM aday a WHERE a.sembol = parite.sembol)",
+    ]),
 ]
 SEMA_SURUMU = GOCLER[-1][0]
-TABLOLAR = ('meta', 'parite', 'mum', 'aday', 'etiket', 'defter', 'kagit_islem', 'tarama', 'olay')
+TABLOLAR = ('meta', 'parite', 'mum', 'aday', 'etiket', 'defter', 'kagit_islem', 'tarama', 'olay', 'tanim')
 ANAHTARLAR = {'parite': ('sembol',), 'mum': ('sembol', 'ts'), 'aday': ('ts', 'sembol'), 'etiket': ('ts', 'sembol'),
               'defter': ('ts', 'sembol'), 'tarama': ('ts',)}
 
@@ -306,8 +371,9 @@ class Hafiza:
             try:
                 yield self.c
             except BaseException:
-                self.c.execute(f'ROLLBACK TO {ad}')
-                self.c.execute(f'RELEASE {ad}')
+                if self.c.in_transaction:           # bazı hatalarda (disk dolu) SQLite işlemi kendisi geri alır
+                    self.c.execute(f'ROLLBACK TO {ad}')
+                    self.c.execute(f'RELEASE {ad}')
                 raise
             else:
                 self.c.execute(f'RELEASE {ad}')
@@ -320,13 +386,15 @@ class Hafiza:
             yield self.c
         except BaseException:
             self._derinlik = 0
-            self.c.execute('ROLLBACK')
+            if self.c.in_transaction:               # asıl hata, "işlem yok" hatasıyla örtülmesin
+                self.c.execute('ROLLBACK')
             raise
         self._derinlik = 0
         try:
             self.c.execute('COMMIT')
         except BaseException:
-            self.c.execute('ROLLBACK')
+            if self.c.in_transaction:
+                self.c.execute('ROLLBACK')
             raise
 
     def kapat(self):
@@ -430,7 +498,8 @@ class Hafiza:
         d = np.asarray(d, dtype=float).reshape(-1, 9)
         if not len(d):
             return 0
-        satirlar = [(sembol, int(r[0]), *map(float, r[1:7]), int(r[7]), float(r[8])) for r in d.tolist()]
+        satirlar = [(sembol, int(r[0]), *(_deger(x) for x in r[1:7]), int(r[7]) if math.isfinite(r[7]) else None,
+                     _deger(r[8])) for r in d.tolist()]                     # NaN -> NULL (ızgarada eksik sayılır)
         with self.islem():
             self.c.executemany(
                 'INSERT INTO mum (sembol, ts, o, h, l, c, v, qv, islem_adedi, alici_qv) VALUES (?,?,?,?,?,?,?,?,?,?) '
@@ -464,8 +533,19 @@ class Hafiza:
     # --- aday, etiket, defter --------------------------------------------------------------
     def aday_yaz(self, satirlar: Iterable[dict]) -> int:
         """Her satır: ts, sembol + aday sütunları (LAB_OZELLIKLERI, yeni özellikler, btc_rejim, radar_sira,
-        evren_sira, sinyaller). NaN -> NULL. Aynı (ts, sembol) yeniden yazılırsa üzerine yazılır."""
-        return self._yaz('aday', satirlar)
+        evren_sira, sinyaller, karar_mumu, olusturma_ms, tanim_id). NaN -> NULL. Aynı (ts, sembol) yeniden yazılırsa
+        üzerine yazılır. Paritenin son aday satırı (parite.son_aday_ts) da güncellenir (korunacak_pariteler)."""
+        satirlar = list(satirlar)
+        if not satirlar:
+            return 0
+        son: Dict[str, int] = {}
+        for r in satirlar:
+            son[r['sembol']] = max(son.get(r['sembol'], -1), int(r['ts']))
+        with self.islem():
+            n = self._yaz('aday', satirlar)
+            self.c.executemany('UPDATE parite SET son_aday_ts = ? WHERE sembol = ? AND (son_aday_ts IS NULL OR '
+                               'son_aday_ts < ?)', [(ts, s, ts) for s, ts in son.items()])
+        return n
 
     def adaylar(self, ts: int) -> List[dict]:
         return self.sorgu('SELECT * FROM aday WHERE ts = ? ORDER BY sembol', (int(ts),))
@@ -489,9 +569,12 @@ class Hafiza:
             (ust - int(geri_gun) * GUN_MS, ust, mo.UFUK * SAAT_MS, int(limit))).fetchall()
         return [(int(x[0]), x[1]) for x in r]
 
-    def etiketle(self, simdi_ms: int, limit: int = 5000, geri_gun: int = ETIKET_GERI_GUN) -> int:
+    def etiketle(self, simdi_ms: int, limit: int = 5000, geri_gun: int = ETIKET_GERI_GUN,
+                 tanim_id: Optional[int] = None) -> int:
         """Bekleyen aday satırlarını etiketler (makine_ozellikleri.ileri_etiketler; ızgara paritenin kapsamıyla
-        sınırlı: henüz çekilmemiş saat 'eksik' sayılmaz). Dönen: yazılan etiket satırı (kalıcı NULL olanlar dahil)."""
+        sınırlı: henüz çekilmemiş saat 'eksik' sayılmaz). tanim_id verilirse satırlara yazılır. Dönen: yazılan etiket
+        satırı (kalıcı NULL olanlar dahil)."""
+        ek = {} if tanim_id is None else {'tanim_id': int(tanim_id)}
         bekleyen: Dict[str, List[int]] = {}
         for ts, s in self.etiket_bekleyenler(simdi_ms, limit, geri_gun):
             bekleyen.setdefault(s, []).append(ts)
@@ -502,7 +585,7 @@ class Hafiza:
             for ts in tsler:
                 e = mo.ileri_etiketler(g.O, g.H, g.L, g.C, int((ts - g.ts[0]) // SAAT_MS))
                 if e is not None:
-                    satirlar.append({'ts': ts, 'sembol': s, **e, 'olusturma_ms': int(simdi_ms)})
+                    satirlar.append({'ts': ts, 'sembol': s, **e, 'olusturma_ms': int(simdi_ms), **ek})
         return self.etiket_yaz(satirlar)
 
     # --- kâğıt işlem -----------------------------------------------------------------------
@@ -571,14 +654,169 @@ class Hafiza:
         return self.sorgu('SELECT * FROM olay WHERE ' + ' AND '.join(kosul) + ' ORDER BY ms DESC, id DESC'
                           + (' LIMIT ?' if limit is not None else ''), p + ([int(limit)] if limit is not None else []))
 
-    def uyari_izinli(self, tur: str, simdi_ms: int, aralik_ms: int = 6 * SAAT_MS) -> bool:
-        """Uyarı sınırlaması: bu türden son uyarı aralik_ms'den eskiyse True döner ve şimdiyi kaydeder."""
-        anahtar = f'uyari_{tur}'
-        son = self.meta_oku(anahtar)
-        if son is not None and int(simdi_ms) - int(son) < aralik_ms:
-            return False
-        self.meta_yaz(anahtar, int(simdi_ms))
-        return True
+    def tanim_kaydet(self, icerik: dict, simdi_ms: int) -> Tuple[int, Optional[int]]:
+        """Tanım sürümü (tanim tablosu): icerik (JSON'a çevrilebilir: elle artırılan sürüm, kaynak dosya özetleri,
+        parametreler) yoksa eklenir. meta.son_tanim_id güncellenir. Dönen: (kimlik, önceki kimlik): önceki, son
+        kullanılan tanım bundan farklıysa onun kimliği (tanım değişti), değilse None."""
+        metin = json.dumps(icerik, ensure_ascii=False, sort_keys=True)
+        ozet = hashlib.sha256(metin.encode('utf-8')).hexdigest()[:16]
+        with self.islem():
+            r = self.c.execute('SELECT id FROM tanim WHERE ozet = ?', (ozet,)).fetchone()
+            kimlik = int(r[0]) if r is not None else int(self.c.execute(
+                'INSERT INTO tanim (ozet, icerik, ilk_ms) VALUES (?, ?, ?)', (ozet, metin, int(simdi_ms))).lastrowid)
+            onceki = self.meta_oku('son_tanim_id')
+            self.meta_yaz('son_tanim_id', kimlik)
+        return kimlik, (int(onceki) if onceki is not None and int(onceki) != kimlik else None)
+
+    # --- döngü yardımcıları -----------------------------------------------------------------
+    def ilk_baslangic(self, simdi_ms: Optional[int] = None) -> Optional[int]:
+        """meta.ilk_baslangic: makinenin İLK başlatıldığı an (ms). Kayıt yoksa ve simdi_ms verildiyse yazılır; sonraki
+        başlatmalar değiştirmez. Bu andan önceki karar mumlarında kâğıt işlem açılmaz (makine.py)."""
+        deger = self.meta_oku('ilk_baslangic')
+        if deger is None and simdi_ms is not None:
+            self.meta_yaz('ilk_baslangic', int(simdi_ms))
+            return int(simdi_ms)
+        return None if deger is None else int(deger)
+
+    def mum_durumu(self, sembol: str, ts: int) -> str:
+        """Tek mumun durumu: 'VAR' (geçerli fiyatlı mum saklı), 'YOK' (kalıcı boşluk: kapsam geçti ama mum yok ya da
+        fiyatı bozuk; strateji_lab ızgarasında NaN) ya da 'BEKLENIYOR' (henüz çekilmedi). Kâğıt işlemin giriş mumu
+        için: BEKLIYOR -> ACIK (VAR) / ATLANDI (YOK) / bekle (BEKLENIYOR)."""
+        r = self.c.execute('SELECT o, h, l, c FROM mum WHERE sembol = ? AND ts = ?', (sembol, int(ts))).fetchone()
+        if r is not None:
+            return 'VAR' if all(x is not None and math.isfinite(x) and x > 0 for x in r) else 'YOK'
+        p = self.parite_oku(sembol)
+        kapsam = p.get('kapsam_ts') if p else None
+        return 'YOK' if kapsam is not None and int(kapsam) > int(ts) else 'BEKLENIYOR'
+
+    def acik_islem_girisi(self, sembol: str) -> Optional[int]:
+        """Paritenin BEKLIYOR/ACIK kâğıt işlemlerinin en eski giriş mumu (yoksa None): toplayıcı geri doldurmayı
+        buna göre uzatır (modül belgesi, Kapsam)."""
+        r = self.c.execute("SELECT MIN(giris_ts) FROM kagit_islem WHERE durum IN ('BEKLIYOR', 'ACIK') AND sembol = ?",
+                           (sembol,)).fetchone()
+        return int(r[0]) if r is not None and r[0] is not None else None
+
+    def korunacak_pariteler(self, simdi_ms: int, geri_gun: int = ETIKET_GERI_GUN) -> List[str]:
+        """Evrenden çıksa da mumları her tur güncellenecek pariteler (evren_sec(korunan=...)): BEKLIYOR/ACIK kâğıt
+        işlemi olanlar (giriş ve çıkış izlenir), son UFUK + 2 saatte aday satırı olanlar ve son aday satırı henüz
+        etiketlenemeyenler (parite.son_aday_ts etiket bakış penceresinde ve kapsam son_aday_ts + UFUK'u geçmedi:
+        etiket_bekleyenler'in tersi; kesinti sırasında evrenden çıkan paritenin son satırları da etiketlensin).
+        Alfabetik."""
+        alt = int(simdi_ms) - (mo.UFUK + 2) * SAAT_MS
+        geri = int(simdi_ms) - (mo.UFUK + 1) * SAAT_MS - int(geri_gun) * GUN_MS
+        r = self.c.execute("SELECT sembol FROM kagit_islem WHERE durum IN ('BEKLIYOR', 'ACIK') "
+                           "UNION SELECT sembol FROM aday WHERE ts >= ? "
+                           "UNION SELECT sembol FROM parite WHERE son_aday_ts >= ? AND (kapsam_ts IS NULL OR "
+                           "kapsam_ts <= son_aday_ts + ?) ORDER BY 1",
+                           (alt, geri, mo.UFUK * SAAT_MS)).fetchall()
+        return [x[0] for x in r]
+
+    def sabit_ayikla(self, semboller: Iterable[str],
+                     koru: Sequence[str] = ('BTC/USDT',)) -> Tuple[List[str], List[str], List[str]]:
+        """strateji_lab.gecis1 gibi: sabit coinler ve hiç verisi olmayanlar (karar verilemeyen) evrenden çıkar, sıra
+        korunur (radarın eşitlik bozması sütun sırasına bağlı). Mumlar güncellendikten SONRA çağrılır: ilk kez
+        görülen paritenin kararı çekilen ilk geçmişle verilir. Dönen: (kalan, sabit, verisiz)."""
+        kalan, sabit, verisiz = [], [], []
+        for s in dict.fromkeys(semboller):
+            karar = self.sabit_karari(s, koru)
+            (verisiz if karar is None else sabit if karar else kalan).append(s)
+        return kalan, sabit, verisiz
+
+    def kacirilanlari_yaz(self, t: int, alt_ts: Optional[int] = None) -> List[int]:
+        """Karar mumu t işlenmeden önce çağrılır: son tur kaydı ile t arasında kaydı olmayan saatler 'KACIRILDI'
+        yazılır (makine kapalıydı ya da tur yetişmedi; o saatlerde geriye dönük işlem açılmaz). alt_ts'den önceki
+        saatler yazılmaz. Hiç tur kaydı yoksa (ilk çalıştırma) yazılmaz. Dönen: yazılan karar saatleri."""
+        r = self.c.execute('SELECT MAX(ts) FROM tarama WHERE ts < ?', (int(t),)).fetchone()
+        if r is None or r[0] is None:
+            return []
+        bas = int(r[0]) + SAAT_MS if alt_ts is None else max(int(r[0]) + SAAT_MS, int(alt_ts))
+        saatler = list(range(bas, int(t), SAAT_MS))
+        self._yaz('tarama', [{'ts': x, 'durum': 'KACIRILDI'} for x in saatler])
+        return saatler
+
+    # --- rapor sorguları (oranlar 0..1, getiriler kesir; biçim rapordadır) ---------------------
+    def kagit_ozeti(self, islem_usdt: float = 20.0, bas_ts: Optional[int] = None,
+                    bit_ts: Optional[int] = None) -> Dict[str, dict]:
+        """Strateji başına kâğıt işlem özeti. [bas_ts, bit_ts) aralığı (verilmezse tümü):
+          kapali, kazanan (getiri > 0), kazanma_orani, beklenti (ortalama net getiri, k=1), toplam_usdt (işlem başına
+          islem_usdt, bileşik değil): çıkışı (cikis_ts = çıkış mumunun kapanışı) aralıkta olan KAPALI işlemler;
+          acilan: girişi (giris_ts) aralıkta olan ACIK/KAPALI işlemler; atlandi: sinyali aralıkta olan ATLANDI.
+        Anlık (aralıktan bağımsız): acik (ACIK), bekliyor (BEKLIYOR). Hiç kaydı olmayan strateji yer almaz."""
+        p = {'a': -2 ** 62 if bas_ts is None else int(bas_ts), 'b': 2 ** 62 if bit_ts is None else int(bit_ts)}
+        kapali = "durum = 'KAPALI' AND cikis_ts >= :a AND cikis_ts < :b"
+        sonuc = {}
+        for r in self.c.execute(
+                f"SELECT strateji, SUM({kapali}) AS kapali, SUM({kapali} AND getiri > 0) AS kazanan, "
+                f"AVG(CASE WHEN {kapali} THEN getiri END) AS beklenti, "
+                f"SUM(CASE WHEN {kapali} THEN getiri END) AS toplam, "
+                "SUM(durum IN ('ACIK', 'KAPALI') AND giris_ts >= :a AND giris_ts < :b) AS acilan, "
+                "SUM(durum = 'ATLANDI' AND sinyal_ts >= :a AND sinyal_ts < :b) AS atlandi, "
+                "SUM(durum = 'ACIK') AS acik, SUM(durum = 'BEKLIYOR') AS bekliyor "
+                "FROM kagit_islem GROUP BY strateji ORDER BY strateji", p):
+            n = int(r['kapali'] or 0)
+            sonuc[r['strateji']] = {
+                'kapali': n, 'kazanan': int(r['kazanan'] or 0),
+                'kazanma_orani': (int(r['kazanan'] or 0) / n) if n else None,
+                'beklenti': float(r['beklenti']) if n else None,
+                'toplam_usdt': float(r['toplam'] or 0.0) * float(islem_usdt),
+                'acilan': int(r['acilan'] or 0), 'atlandi': int(r['atlandi'] or 0),
+                'acik': int(r['acik'] or 0), 'bekliyor': int(r['bekliyor'] or 0)}
+        return sonuc
+
+    def dedektor_karnesi(self, bas_ts: int, bit_ts: Optional[int] = None) -> dict:
+        """Sinyallerin ileri etiketlere göre karnesi: etiketi hesaplanmış (ucus10 NULL değil) aday satırları,
+        ts [bas_ts, bit_ts). 'taban': bütün bu satırlar; 'strateji': {ad: o mumda stratejinin sinyali olan satırlar}.
+        Her biri: n, ucus10_orani (+%10 -%5'ten önce), max_yukari_ort (24 saatte en yüksek tepe, ortalama);
+        stratejilerde ayrıca kat = ucus10_orani / tabanınki (taban 0 ise None). Strateji sırası alfabetik."""
+        p = (int(bas_ts), 2 ** 62 if bit_ts is None else int(bit_ts))
+        n, u, m = self.c.execute('SELECT COUNT(*), AVG(ucus10), AVG(max_yukari_24s) FROM etiket WHERE ts >= ? AND '
+                                 'ts < ? AND ucus10 IS NOT NULL', p).fetchone()
+        taban = {'n': int(n), 'ucus10_orani': u, 'max_yukari_ort': m}
+        toplam: Dict[str, list] = {}
+        for sinyaller, ucus, yukari in self.c.execute(
+                "SELECT a.sinyaller, e.ucus10, e.max_yukari_24s FROM aday a JOIN etiket e ON e.ts = a.ts AND "
+                "e.sembol = a.sembol WHERE a.ts >= ? AND a.ts < ? AND a.sinyaller != '' AND e.ucus10 IS NOT NULL", p):
+            for ad in filter(None, sinyaller.split(',')):
+                t = toplam.setdefault(ad, [0, 0, 0.0, 0])
+                t[0] += 1
+                t[1] += int(ucus)
+                if yukari is not None:
+                    t[2] += float(yukari)
+                    t[3] += 1
+        strateji = {}
+        for ad in sorted(toplam):
+            k, ucus, yukari, ky = toplam[ad]
+            oran = ucus / k
+            strateji[ad] = {'n': k, 'ucus10_orani': oran, 'max_yukari_ort': yukari / ky if ky else None,
+                            'kat': oran / u if u else None}
+        return {'taban': taban, 'strateji': strateji}
+
+    def sinyal_sayilari(self, bas_ts: int, bit_ts: Optional[int] = None) -> Dict[str, int]:
+        """aday.sinyaller'den strateji başına sinyal sayısı, karar saati [bas_ts, bit_ts) (alfabetik)."""
+        sayac: Dict[str, int] = {}
+        for (sinyaller,) in self.c.execute("SELECT sinyaller FROM aday WHERE ts >= ? AND ts < ? AND sinyaller != ''",
+                                           (int(bas_ts), 2 ** 62 if bit_ts is None else int(bit_ts))):
+            for ad in filter(None, sinyaller.split(',')):
+                sayac[ad] = sayac.get(ad, 0) + 1
+        return dict(sorted(sayac.items()))
+
+    def tarama_ozeti(self, bas_ts: int, bit_ts: Optional[int] = None) -> dict:
+        """Karar saatleri [bas_ts, bit_ts) için tur özeti: durum başına sayı ('TAMAM', 'KACIRILDI', 'HATA' ve varsa
+        diğerleri), sayısal sütunların toplamı (mum_hatasi, sinyal, acilan, kapanan, etiketlenen, defter), son turun
+        evren büyüklüğü (evren) ve son kaydın saati (son_ts)."""
+        p = (int(bas_ts), 2 ** 62 if bit_ts is None else int(bit_ts))
+        o = {'TAMAM': 0, 'KACIRILDI': 0, 'HATA': 0}
+        o.update({d: int(n) for d, n in self.c.execute('SELECT durum, COUNT(*) FROM tarama WHERE ts >= ? AND ts < ? '
+                                                       'GROUP BY durum', p)})
+        alanlar = ('mum_hatasi', 'sinyal', 'acilan', 'kapanan', 'etiketlenen', 'defter')
+        r = self.c.execute(f"SELECT {', '.join(f'SUM({k})' for k in alanlar)}, MAX(ts) FROM tarama WHERE ts >= ? AND "
+                           f"ts < ?", p).fetchone()
+        o.update({k: int(v or 0) for k, v in zip(alanlar, r)})
+        o['son_ts'] = r[-1]
+        e = self.c.execute('SELECT evren FROM tarama WHERE ts >= ? AND ts < ? AND evren IS NOT NULL ORDER BY ts DESC '
+                           'LIMIT 1', p).fetchone()
+        o['evren'] = e[0] if e else None
+        return o
 
     # --- istatistik ve saklama --------------------------------------------------------------
     def sayimlar(self) -> Dict[str, int]:
@@ -693,9 +931,16 @@ def _kisa(e: BaseException) -> str:
     return f"{type(e).__name__}: {str(e)[:200]}"
 
 
+class IstekSiniri(ccxt.NetworkError):
+    """Borsanın istek sınırı (418/429) beklemesi sürüyor: istek gönderilmedi."""
+
+
 class MumToplayici:
     """Ham 1s klines -> mum tablosu (modül belgesi). ex: anahtarsız ccxt binance (ya da aynı arayüzlü sahte borsa:
-    market(sembol)['id'], load_markets(yenile), publicGetKlines(params)). uyku: bekleme işlevi (testte sahte)."""
+    market(sembol)['id'], load_markets(yenile), publicGetKlines(params)). uyku: bekleme işlevi (testte sahte).
+    dur: durdurma isteği (makine SIGTERM aldı): True dönerse guncelle/defter_topla kalan pariteleri denemez
+    ('durdurulan' listesi), tur yarıda bırakılabilir. sinir_bitis_ms: istek sınırı beklemesinin bitişi (hafızanın
+    saatiyle; modül belgesi)."""
 
     def __init__(self, ex, hafiza: Hafiza, uyku: Callable[[float], None] = time.sleep, deneme: int = DENEME,
                  pencere: int = PENCERE, sayfa: int = SAYFA, ardisik_hata_siniri: int = ARDISIK_HATA_SINIRI,
@@ -704,20 +949,53 @@ class MumToplayici:
         self.pencere, self.sayfa = pencere, sayfa
         self.ardisik_hata_siniri, self.yok_bekleme_ms = ardisik_hata_siniri, yok_bekleme_ms
         self.istek = 0
+        self.sinir_bitis_ms = 0
+        self.son_sinir: Optional[str] = None
         self._yenilendi = False
+        self.dur: Callable[[], bool] = lambda: False
+
+    def sinirda(self) -> bool:
+        """İstek sınırı beklemesi sürüyor mu (bu sürede hiç istek gönderilmez)."""
+        return int(self.h.saat()) < self.sinir_bitis_ms
+
+    def _sinir_koy(self, e: BaseException, varsayilan_sn: float) -> None:
+        """418/429: yanıttaki Retry-After (yoksa varsayılan) kadar hiç istek gönderilmez."""
+        sn = float(varsayilan_sn)
+        try:
+            basliklar = getattr(self.ex, 'last_response_headers', None) or {}
+            ra = basliklar.get('Retry-After') or basliklar.get('retry-after')
+            if ra is not None and math.isfinite(float(ra)) and float(ra) > 0:
+                sn = float(ra)
+        except Exception:  # noqa: BLE001 - başlık okunamadı: varsayılan bekleme
+            pass
+        self.sinir_bitis_ms = max(self.sinir_bitis_ms, int(self.h.saat()) + int(sn * 1000))
+        self.son_sinir = f"{_kisa(e)}; {sn:.0f} sn istek yok"
+        LOG.error(f"borsa istek sınırı ({_kisa(e)}): {sn:.0f} sn hiç istek gönderilmeyecek (IP canlı botla ortak)")
 
     def _istek(self, fn, *a, **k):
-        """Ağ hatalarında 2, 4, 8 sn bekleyip yeniden dener; son denemenin hatası yükselir."""
+        """Ağ hatalarında 2, 4, 8 sn bekleyip yeniden dener; son denemenin hatası yükselir. 418 (DDoSProtection)
+        yeniden denenmez; 418'de ve denemeleri tükenen 429'da istek sınırı beklemesi başlar. Bekleme sürerken istek
+        gönderilmez (IstekSiniri)."""
+        if self.sinirda():
+            raise IstekSiniri(f"istek sınırı beklemesi sürüyor ({self.son_sinir})")
         for deneme in range(self.deneme):
             try:
                 self.istek += 1
                 return fn(*a, **k)
             except AG_HATALARI as e:
-                if deneme == self.deneme - 1:
+                yasak = isinstance(e, ccxt.DDoSProtection)
+                son = deneme == self.deneme - 1
+                if yasak or (son and isinstance(e, ccxt.RateLimitExceeded)):
+                    self._sinir_koy(e, YASAK_BEKLEME_SN if yasak else SINIR_BEKLEME_SN)
+                if yasak or son:
                     raise
                 bekle = 2 ** (deneme + 1)
                 LOG.warning(f"ağ hatası ({_kisa(e)}); {bekle} sn sonra yeniden denenecek")
                 self.uyku(bekle)
+
+    def cagir(self, fn, *a, **k):
+        """Herkese açık bir uç çağrısı, mumlarla aynı yeniden deneme kuralıyla (makine: fetch_tickers)."""
+        return self._istek(fn, *a, **k)
 
     def market_id(self, sembol: str) -> str:
         """Borsanın sembol kimliği (BTC/USDT -> BTCUSDT). Bilinmeyen sembolde piyasalar turda bir kez yeniden yüklenir
@@ -735,10 +1013,17 @@ class MumToplayici:
 
     def cek(self, sembol: str, simdi_ms: int) -> int:
         """Bir paritenin kapsamından şimdiye kadarki kapanmış mumlarını çeker ve yazar (sayfa sayfa; her sayfa kendi
-        işleminde, yarıda kalırsa kapsam yazılan yere kadar ilerler). Dönen: yazılan mum sayısı. Hatalar yükselir."""
+        işleminde, yarıda kalırsa kapsam yazılan yere kadar ilerler). Geri doldurma en çok PENCERE saat; BEKLIYOR/
+        ACIK kâğıt işlemi olan paritede işlemin girişinden ISLEM_ONCESI_SAAT önceye kadar (en çok
+        ISLEM_GERI_AZAMI_GUN). Kapanmış mum ve kapsam kuralı modül belgesinde. Dönen: yazılan mum sayısı. Hatalar
+        yükselir."""
         simdi_ms = int(simdi_ms)
-        acik = (simdi_ms // SAAT_MS) * SAAT_MS              # henüz kapanmamış mumun açılışı
+        acik = (simdi_ms // SAAT_MS) * SAAT_MS              # yerel saate göre henüz kapanmamış mumun açılışı
         en_eski = acik - self.pencere * SAAT_MS
+        giris = self.h.acik_islem_girisi(sembol)
+        if giris is not None:          # açık işlemin girişi ve çıkışı için gereken mumlar PENCERE'den eski olabilir
+            en_eski = min(en_eski, max(giris - ISLEM_ONCESI_SAAT * SAAT_MS,
+                                       acik - ISLEM_GERI_AZAMI_GUN * GUN_MS))
         p = self.h.parite_oku(sembol)
         kapsam = p.get('kapsam_ts') if p else None
         if kapsam is None:
@@ -759,12 +1044,20 @@ class MumToplayici:
             d = d[(d[:, 0] >= bas) & (d[:, 0] % SAAT_MS == 0)]
             if not len(d):
                 break                                       # bu saatten sonra borsada mum yok (ya da henüz yok)
-            kapali = d[d[:, 0] + SAAT_MS <= simdi_ms]
+            # kapanmış: yerel saatte kapanmış VE (yanıtta ardından mum var YA DA kapanışından KAPANIS_PAYI_MS geçti)
+            ardi_var = np.r_[np.ones(len(d) - 1, dtype=bool), False]
+            kapanis = d[:, 0] + SAAT_MS
+            kapali_mi = (kapanis <= simdi_ms) & (ardi_var | (kapanis + KAPANIS_PAYI_MS <= simdi_ms))
+            ilk_acik = np.flatnonzero(~kapali_mi)
+            # kapsam: kapanmamış ilk mumun saatine (o saatten öncesi ya saklandı ya da kalıcı boşluk) ya da son
+            # kapanmış mumun arkasına kadar; yerel saatin açık mumunu geçmez
+            kapsam_yeni = int(d[ilk_acik[0], 0]) if len(ilk_acik) else int(d[-1, 0]) + SAAT_MS
+            kapali = d[:ilk_acik[0]] if len(ilk_acik) else d
             with self.h.islem():
                 yazilan += self.h.mum_yaz(sembol, kapali)
-                # kapsam yalnız borsanın gösterdiği son mumun saatine kadar (açık mum geldiyse şimdiye kadar)
-                self.h.parite_yaz(sembol, kapsam_ts=min(acik, int(d[-1, 0]) + SAAT_MS), market_id=mid,
-                                  durum='AKTIF')
+                self.h.parite_yaz(sembol, kapsam_ts=min(acik, kapsam_yeni), market_id=mid, durum='AKTIF')
+            if len(ilk_acik):
+                break
             if len(ham) < limit:
                 break
             bas = int(d[-1, 0]) + SAAT_MS
@@ -773,12 +1066,16 @@ class MumToplayici:
     def guncelle(self, semboller: Iterable[str], simdi_ms: int) -> dict:
         """Her paritenin mumlarını günceller; hiçbir parite hatası yükselmez (tur ölmez). Başarılı paritelerde sabit
         coin kararı da güncellenir. Dönen: {'yeni': {sembol: yazılan}, 'hata': {sembol: mesaj}, 'yok': [sembol]
-        (BadSymbol ya da bekleme süresinde), 'atlanan': [sembol] (üst üste ağ hatası: denenmedi), 'istek': n}."""
+        (BadSymbol ya da bekleme süresinde), 'atlanan': [sembol] (üst üste ağ hatası: denenmedi), 'durdurulan':
+        [sembol] (durdurma isteği: denenmedi), 'istek': n}."""
         self._yenilendi = False
-        sonuc = {'yeni': {}, 'hata': {}, 'yok': [], 'atlanan': [], 'istek': 0}
+        sonuc = {'yeni': {}, 'hata': {}, 'yok': [], 'atlanan': [], 'durdurulan': [], 'istek': 0}
         istek0, ardisik = self.istek, 0
         for s in dict.fromkeys(semboller):
-            if ardisik >= self.ardisik_hata_siniri:
+            if self.dur():
+                sonuc['durdurulan'].append(s)
+                continue
+            if ardisik >= self.ardisik_hata_siniri or self.sinirda():
                 sonuc['atlanan'].append(s)
                 continue
             p = self.h.parite_oku(s)
@@ -808,8 +1105,41 @@ class MumToplayici:
             except sqlite3.Error as e:
                 LOG.warning(f"{s}: sabit coin kararı yazılamadı ({_kisa(e)})")
         if sonuc['atlanan']:
-            LOG.error(f"üst üste {self.ardisik_hata_siniri} paritede ağ hatası: {len(sonuc['atlanan'])} parite bu tur "
-                      f"denenmedi")
+            neden = ('istek sınırı beklemesi' if self.sinirda()
+                     else f"üst üste {self.ardisik_hata_siniri} paritede ağ hatası")
+            LOG.error(f"{neden}: {len(sonuc['atlanan'])} parite bu tur denenmedi")
+        sonuc['istek'] = self.istek - istek0
+        return sonuc
+
+    def defter_topla(self, semboller: Iterable[str], ts: int, simdi_ms: int, limit: int = DEFTER_LIMIT) -> dict:
+        """Emir defteri anlık görüntüsü (geçmişi yok: şimdi toplanır ki birkaç ay sonra sınanabilsin):
+        ex.fetch_order_book(sembol, limit) (herkese açık uç) -> makine_ozellikleri.defter_ozellikleri -> defter
+        tablosu (ts = karar mumu, alinma_ms = simdi_ms). Ağ hatasında mumlar gibi yeniden denenir, üst üste
+        ardisik_hata_siniri hatada kalanlar denenmez; hiçbir hata yükselmez. Dönen: {'yazilan': n, 'hata': {sembol:
+        mesaj}, 'bos': [sembol] (defter boş ya da çapraz: yazılmadı), 'atlanan': [sembol], 'durdurulan': [sembol],
+        'istek': n}."""
+        sonuc = {'yazilan': 0, 'hata': {}, 'bos': [], 'atlanan': [], 'durdurulan': [], 'istek': 0}
+        istek0, ardisik, satirlar = self.istek, 0, []
+        for s in dict.fromkeys(semboller):
+            if self.dur():
+                sonuc['durdurulan'].append(s)
+                continue
+            if ardisik >= self.ardisik_hata_siniri or self.sinirda():
+                sonuc['atlanan'].append(s)
+                continue
+            try:
+                oz = mo.defter_ozellikleri(self._istek(self.ex.fetch_order_book, s, limit=int(limit)))
+                ardisik = 0
+            except Exception as e:  # noqa: BLE001 - bir paritenin hatası diğerlerini durdurmaz
+                ardisik = ardisik + 1 if isinstance(e, AG_HATALARI) else 0
+                sonuc['hata'][s] = _kisa(e)
+                LOG.warning(f"{s}: emir defteri alınamadı ({_kisa(e)})")
+                continue
+            if oz is None:
+                sonuc['bos'].append(s)
+                continue
+            satirlar.append({'ts': int(ts), 'sembol': s, 'alinma_ms': int(simdi_ms), **oz})
+        sonuc['yazilan'] = self.h.defter_yaz(satirlar)
         sonuc['istek'] = self.istek - istek0
         return sonuc
 
@@ -831,6 +1161,19 @@ def _sayi(x) -> float:
         return v if math.isfinite(v) else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+def ilginc_sec(satirlar: Iterable[dict], azami: int = DEFTER_AZAMI) -> List[str]:
+    """Emir defteri çekilecek 'ilginç' pariteler (turun aday satırlarından): o mumda sinyal VEYA vol_ratio14 >
+    ILGINC_HACIM VEYA |ret1| > ILGINC_RET1. En çok azami tane; sıra: önce sinyalliler (kâğıt işlemin girişindeki
+    defter en değerli veri), sonra vol_ratio14 büyükten küçüğe (NULL en sonda), eşitlikte sembol."""
+    secilen = []
+    for r in satirlar:
+        v, r1 = _deger(r.get('vol_ratio14')), _deger(r.get('ret1'))
+        sinyal = bool(r.get('sinyaller'))
+        if sinyal or (v is not None and v > ILGINC_HACIM) or (r1 is not None and abs(r1) > ILGINC_RET1):
+            secilen.append((not sinyal, v is None, -(v or 0.0), r['sembol']))
+    return [x[-1] for x in sorted(secilen)[:max(int(azami), 0)]]
 
 
 def kaldiracli_mi(baz: str, bazlar) -> bool:

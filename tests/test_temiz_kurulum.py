@@ -172,10 +172,12 @@ def test_calisan_surec_tespiti(monkeypatch):
         stdout = ("  123 /root/venv/bin/python /root/ufuk_bot.py\n"
                   "  456 python3 ai_bot_v18_4_paket/tools/temiz_kurulum.py --uygula\n"
                   "  789 /usr/bin/python3 /opt/baska.py\n"
-                  " 1011 /root/venv/bin/python ai_bot.py\n")
+                  " 1011 /root/venv/bin/python ai_bot.py\n"
+                  " 1213 venv/bin/python -u makine.py\n")
     monkeypatch.setattr(tk.subprocess, 'run', lambda *a, **k: Sonuc())
     bulunan = tk.calisan_bot_surecleri({'ufuk_bot.py'})
-    assert bulunan == ['123 /root/venv/bin/python /root/ufuk_bot.py', '1011 /root/venv/bin/python ai_bot.py']
+    assert bulunan == ['123 /root/venv/bin/python /root/ufuk_bot.py', '1011 /root/venv/bin/python ai_bot.py',
+                       '1213 venv/bin/python -u makine.py']
 
 
 def test_cron_log_dosyalari_ve_cron_onerisi(sunucu, monkeypatch, capsys):
@@ -205,6 +207,7 @@ def test_guncelle_yalniz_kodu_yeniler(sunucu):
     assert 'V18.4' in _icerik(os.path.join(eski, 'ai_bot.py')) and os.path.exists(os.path.join(eski, 'sniper'))
     assert {ad: _icerik(os.path.join(kok, ad)) for ad in once_veri} == once_veri          # veri aynen duruyor
     assert os.path.exists(os.path.join(kok, 'sniper', 'risk_motoru.py'))
+    assert _icerik(os.path.join(kok, 'makine.py')) == _icerik(os.path.join(REPO, 'makine.py'))   # makine de kurulur
 
 
 def test_guncelle_bot_calisirken_ve_kurulum_yokken_reddeder(sunucu, monkeypatch, tmp_path):

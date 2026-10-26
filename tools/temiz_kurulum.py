@@ -36,7 +36,7 @@ import subprocess
 import sys
 
 PAKET = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KOD = ['ai_bot.py', 'ai_trainer.py', 'shadow_labeler.py', 'backfill_sinyaller.py', 'sniper', 'tools']
+KOD = ['ai_bot.py', 'ai_trainer.py', 'shadow_labeler.py', 'backfill_sinyaller.py', 'makine.py', 'sniper', 'tools']
 GECMIS = ['core_islem_verileri_v2_gecmis.onarildi.csv', 'core_islem_verileri_v2.csv.yedek.onarildi.csv']
 CANLI_VERI = ['core_islem_verileri.csv', 'core_islem_verileri_v2.csv', 'shadow_sinyaller.csv',
               'core_xgboost_model.json', 'core_xgboost_model.kart.json', 'etiketli_sinyaller.csv',
@@ -122,7 +122,7 @@ def veri_gecerli_mi(yol):
 def calisan_bot_surecleri(adlar=None):
     """Komut satırında bu dosya adlarından biri geçen süreçler (bot, trainer, labeler ya da aynı klasördeki
     başka bir bot). ps yoksa None."""
-    adlar = set(adlar or []) | {'ai_bot.py', 'ai_trainer.py', 'shadow_labeler.py', 'backfill_sinyaller.py'}
+    adlar = set(adlar or []) | {'ai_bot.py', 'ai_trainer.py', 'shadow_labeler.py', 'backfill_sinyaller.py', 'makine.py'}
     try:
         r = subprocess.run(['ps', '-eo', 'pid=,args='], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            universal_newlines=True)

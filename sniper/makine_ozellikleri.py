@@ -121,9 +121,15 @@ def _kayan_medyan(x: np.ndarray, idx: np.ndarray, pencere: int = MEDYAN_PENCERE,
     pencere kısalır)."""
     w = _pencereler(x, pencere, idx, gecikme)
     sonuc = np.full(len(idx), np.nan)
-    yeter = np.isfinite(w).sum(axis=1) >= int(math.ceil(pencere * DOLULUK))
+    dolu = np.isfinite(w)
+    adet = dolu.sum(axis=1)
+    yeter = adet >= int(math.ceil(pencere * DOLULUK))
     if yeter.any():
-        sonuc[yeter] = np.nanmedian(w[yeter], axis=1)
+        # np.nanmedian ile aynı değer (çift adette iki ortanın ortalaması), küçük dizilerde ondan ~10 kat hızlı:
+        # NaN'ler +inf yapılıp sıralanır, ortanca dolu değerlerin sırasından alınır
+        s = np.sort(np.where(dolu[yeter], w[yeter], np.inf), axis=1)
+        c, r = adet[yeter], np.arange(int(yeter.sum()))
+        sonuc[yeter] = (s[r, (c - 1) // 2] + s[r, c // 2]) / 2
     return sonuc
 
 
