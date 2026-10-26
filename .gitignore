@@ -5,3 +5,6 @@ __pycache__/
 *.tmp.json
 sim_onbellek/
 v184_sim_*
+makine.db*
+makine.log*
+makine.lock
