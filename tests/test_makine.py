@@ -2034,7 +2034,9 @@ def test_komut_satiri(tmp_path, monkeypatch, capsys, gunluk_geri_al):
     assert mk.main(['--durum', '--db', db]) == 2 and 'veritabanı yok' in capsys.readouterr().out
     simdi = int(time.time() * 1000)
     ts0 = (simdi // SAAT) * SAAT - 300 * SAAT
-    veri = {s: sentetik(300, i + 1, ts0=ts0) for i, s in enumerate(['BTC/USDT', 'A/USDT'])}
+    # 301. mum yerel saatin açık mumu: borsa yanıtında karar mumunun ardından mum bulunur (gerçek Binance gibi); yoksa
+    # karar mumu ancak kapanışından KAPANIS_PAYI_MS sonra kapanmış sayılır ve test saat başından sonraki ilk 5 dk düşerdi
+    veri = {s: sentetik(301, i + 1, ts0=ts0) for i, s in enumerate(['BTC/USDT', 'A/USDT'])}
     ex = SahteBorsa(veri, simdi + SAAT, tickers={s: {'quoteVolume': 1e9} for s in veri})
     isleyiciler = []
     monkeypatch.setattr(mk, 'borsa_kur', lambda: ex)

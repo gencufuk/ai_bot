@@ -760,8 +760,10 @@ def test_backfill_karsilastirmasi_eklenen_sinyalleri_ayri_olcer():
     ozet = vs.backfill_karsilastirma({'B_V184_AI': taban, 'B_AI_ATR4': taban + atr, 'B_AI_REJIMSIZ': taban + yatay,
                                       'B_V1802': [islem(f"E{i}", i, 0.02) for i in range(15)], 'V184': taban})
     assert set(ozet['senaryolar']) == {'B_V184_AI', 'B_AI_ATR4', 'B_AI_REJIMSIZ', 'B_V1802'}   # yalnız backfill
-    assert ozet['senaryolar']['B_V184_AI'] == pytest.approx(
-        {'n': 20, 'ort': 0.01, 'kazanan': 1.0, 'ga': [pytest.approx(0.01), pytest.approx(0.01)]})
+    taban_ozet = ozet['senaryolar']['B_V184_AI']     # pytest 9: approx iç içe sözlük kabul etmiyor, alan alan
+    assert set(taban_ozet) == {'n', 'ort', 'kazanan', 'ga'} and taban_ozet['n'] == 20
+    assert taban_ozet['ort'] == pytest.approx(0.01) and taban_ozet['kazanan'] == pytest.approx(1.0)
+    assert taban_ozet['ga'] == pytest.approx([0.01, 0.01])
     assert ozet['eklenen']['atr_3_4']['n'] == 8 and ozet['eklenen']['atr_3_4']['ort'] == pytest.approx(-0.02)
     assert ozet['eklenen']['yatay_rejim']['ort'] == pytest.approx(0.004)
     f = ozet['fark']['B_AI_ATR4']
