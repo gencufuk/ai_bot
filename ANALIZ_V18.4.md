@@ -1039,3 +1039,42 @@ Laboratuvar (§12.2) hiçbir kuralın kârlı olmadığını gösterdiği için 
 - **3. aşama:** Makinenin hafızasında, ay ay ileri yürüyen veri madenciliği ve AI yapılacak.
 - **Gerçek işlem:** Yalnız kapıdan geçen bir kural için, küçük tutarla ve otomatik durdurmayla.
 
+## 14. 2. aşama ön kaydı: mum formasyonları ve hacim kalitesi (28 Ekim, sonuçlardan önce)
+**Soru (kullanıcının hedefi):** Mum okuma ve hacim takibiyle sahte hareketleri eleyip gerçek trendi erken yakalamak kâr ettirir mi?
+
+**Veri.** Bugüne kadar kullanılmayan bilgi Binance'in 1 saatlik ham mumlarındaki işlem adedi ve alıcı (taker buy) hacmi. Bunlar geçmiş için de mevcut. Yöntem laboratuvarla aynı:
+- 2023-01-01'den son tamamlanmış aya kadar, bugünün en hacimli 80 USDT paritesi;
+- karar kapanmış mumda verilir, giriş bir sonraki mumun açılışında yapılır;
+- aynı maliyetler;
+- kuruluş dönemi 2023–2024, sınama dönemi 2025 →.
+
+Özellik tanımları `sniper/makine_ozellikleri.py`'deki tanımlarla aynı. Makine canlıda aynı kodu kullanıyor.
+
+**Gerçek hacim süzgeci (GERCEK_HACIM).** Karar mumu t'de hepsi sağlanmalı:
+
+| Koşul | Anlamı |
+|---|---|
+| `islem_orani` ≥ 2.0 | Hacim artışı çok sayıda işlemle geliyor. |
+| `buyuk_lot_orani` ≤ 1.5 | Artış birkaç dev emirden kaynaklanmıyor. |
+| `alici_payi6` ≥ 0.55 | Son 6 saatte alıcı tarafı baskın. |
+| `hacim_yogunlugu24` ≤ 0.25 | 24 saatlik hacim tek bir muma yığılmamış. |
+
+**Yeni kurallar.** Parametreler sabit, sonuca göre değiştirilmeyecek. AI sürümü yok.
+
+| Kural | Giriş (karar mumu t) | Çıkış |
+|---|---|---|
+| ERKEN_GERCEK | ERKEN_BIRIKIM sinyali ve GERCEK_HACIM | KADEMELI |
+| BOT_GERCEK | BOT_VEKILI sinyali ve GERCEK_HACIM (bugünkü botun yöntemi, sahte pompa elenmiş) | KADEMELI |
+| SESSIZ_BIRIKIM | \|ret24\| ≤ %3; kapanış > EMA50; alici_payi6 ≥ 0.60; islem_orani ≥ 1.5; buyuk_lot_orani ≤ 1.2; hacim_yogunlugu24 ≤ 0.20; 24 saatlik hacim ≥ 5M; BTC EMA200 üstünde | KADEMELI |
+| YUTAN_TREND | yutan_boga; kapanış > EMA50 > EMA200; −%8 ≤ ret24 ≤ 0 (geri çekilme sonrası); vol_ratio14 ≥ 1.5; 24 saatlik hacim ≥ 5M; BTC EMA200 üstünde | KADEMELI |
+| CEKIC_DIP | cekic; RSI14 < 35; kapanış > EMA200; 24 saatlik hacim ≥ 5M; BTC EMA200 üstünde | ORTA_BANT |
+| UC_ASKER | uc_beyaz_asker; USDT hacmi üç mum boyunca artıyor (qv[t] > qv[t−1] > qv[t−2]); kapanış > EMA50; ret24 ≤ %10; 24 saatlik hacim ≥ 5M; BTC EMA200 üstünde | KADEMELI |
+
+**Karar kuralı.** §12'deki 5 koşul aynen geçerli; P(>0) ≥ 0.99 eşiği korunuyor. Karar yalnız bu 6 yeni satıra uygulanır. Eski kurallar raporda yalnız karşılaştırma için görünür; onların kararı §12.2'de verildi.
+
+**Bilgi amaçlı bölümler** (karar kuralı değildir):
+- **Dedektör karnesi.** Her kuralın (eski ve yeni) sinyallerinde, karar kapanışından itibaren 24 saat içinde +%10'a −%5'ten önce dokunma oranı (ucus10) ve ortalama en yüksek yükseliş (max_yukari_24s), iki dönemde ayrı ayrı. Bunlar, aynı dönemde 24 saatlik hacmi 5M'yi geçen bütün parite-saatlerinin taban oranıyla karşılaştırılır ve kaç kat olduğu verilir. "Erken fark etme" gücünü al-sat sonucundan ayrı ölçer.
+- **Süzgeç katkısı.** ERKEN_GERCEK ile ERKEN_BIRIKIM, BOT_GERCEK ile BOT_VEKILI karşılaştırılır: süzgecin elediği işlemlerin ortalaması, kalanlarınkiyle.
+
+**Sonuçlar** sunucu çalıştırmasından sonra §14.1'e yazılacak.
+
