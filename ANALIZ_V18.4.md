@@ -1076,5 +1076,17 @@ Laboratuvar (§12.2) hiçbir kuralın kârlı olmadığını gösterdiği için 
 - **Dedektör karnesi.** Her kuralın (eski ve yeni) sinyallerinde, karar kapanışından itibaren 24 saat içinde +%10'a −%5'ten önce dokunma oranı (ucus10) ve ortalama en yüksek yükseliş (max_yukari_24s), iki dönemde ayrı ayrı. Bunlar, aynı dönemde 24 saatlik hacmi 5M'yi geçen bütün parite-saatlerinin taban oranıyla karşılaştırılır ve kaç kat olduğu verilir. "Erken fark etme" gücünü al-sat sonucundan ayrı ölçer.
 - **Süzgeç katkısı.** ERKEN_GERCEK ile ERKEN_BIRIKIM, BOT_GERCEK ile BOT_VEKILI karşılaştırılır: süzgecin elediği işlemlerin ortalaması, kalanlarınkiyle.
 
-**Sonuçlar** sunucu çalıştırmasından sonra §14.1'e yazılacak.
+**Uygulama notu (28 Ekim, sonuçlardan önce).**
+- **Çalıştırma:** `tools/strateji_lab.py --faz2`.
+- **Kural tanımları:** Yeni kurallar ön kayıttaki eşiklerle birebir uygulandı. Bağımsız bir döngüyle 1.752 sinyalde karşılaştırıldı, 0 fark çıktı.
+- **Referans kurallar:** Ham mum yolunda, eski OHLCV yolundaki işlemlerin aynısını veriyor.
+- **Gelecek bilgisi:** Fiyat, işlem adedi ve alıcı hacmi bozularak, satırlar silinerek ve etiketler rastgele değiştirilerek denendi; hiçbir senaryoda gelecek bilgisinin sızdığına dair iz bulunmadı.
+- **Kilitlenen eşikler:** Hacim eşikleri (`--min-hacim` 5M, `--buyuk-hacim` 20M) `--faz2`'de değiştirilemez. Dönem ya da evren farklı verilirse rapor bunu "ön kayıttan sapma" olarak yazar.
+- **İnceleme:** Üç bağımsız inceleme yapıldı. Kritik ya da önemli bulgu çıkmadı; 2 küçük bulgu düzeltildi.
+- **Testler:** `tests/test_strateji_lab.py` 66 test; tam takım 305 test.
+- **Performans (sentetik, 80 parite × 3,8 yıl):**
+  - ilk çalıştırma 2.810 istek, sahte borsayla 83 sn;
+  - önbellekten 36 sn;
+  - ek bellek ~150 MB.
 
+**Sonuçlar** sunucu çalıştırmasından sonra §14.1'e yazılacak.

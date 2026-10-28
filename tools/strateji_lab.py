@@ -77,11 +77,11 @@ sinyal atlanır, bileşik getiri yok. Raporun 8. bölümü her kuralın işlemle
   BOT_GERCEK       BOT_VEKILI sinyali ve GERCEK_HACIM; KADEMELI
   SESSIZ_BIRIKIM   |ret24| <= %3; kapanış > EMA50; alici_payi6 >= 0.60; islem_orani >= 1.5; buyuk_lot_orani <= 1.2;
                    hacim_yogunlugu24 <= 0.20; 24s hacim >= --min-hacim; BTC EMA200 üstünde; KADEMELI
-  YUTAN_TREND      yutan_boga; kapanış > EMA50 > EMA200; -%8 <= ret24 <= 0; vol_ratio14 >= 1.5; 24s hacim yeterli;
+  YUTAN_TREND      yutan_boga; kapanış > EMA50 > EMA200; -%8 <= ret24 <= 0; vol_ratio14 >= 1.5; 24s hacim >= 5M;
                    BTC EMA200 üstünde; KADEMELI
-  CEKIC_DIP        cekic; RSI14 < 35; kapanış > EMA200; 24s hacim yeterli; BTC EMA200 üstünde; ORTA_BANT
+  CEKIC_DIP        cekic; RSI14 < 35; kapanış > EMA200; 24s hacim >= 5M; BTC EMA200 üstünde; ORTA_BANT
   UC_ASKER         uc_beyaz_asker; ham klines USDT hacmi qv[t] > qv[t-1] > qv[t-2]; kapanış > EMA50; ret24 <= %10; 24s
-                   hacim yeterli; BTC EMA200 üstünde; KADEMELI
+                   hacim >= 5M; BTC EMA200 üstünde; KADEMELI
   (ret24, EMA'lar, RSI14, vol_ratio14 ve 24s hacim eski kurallardaki tanımlarla: hacim V x C.) Paritede tek pozisyon,
   veri sonu kuralı, maliyetler ve çıkışlar eski kurallardaki gibi. KARAR (aynı 5 koşul, P(>0) >= 0.99) YALNIZ 6 yeni
   satıra uygulanır; referans satırlar tablolarda '*' (referans: §12.2'de karara bağlandı) ile işaretlenir.
@@ -192,6 +192,11 @@ SESSIZ_RET24, SESSIZ_ALICI6, SESSIZ_ISLEM, SESSIZ_LOT, SESSIZ_YOGUNLUK = 0.03, 0
 YUTAN_RET_ALT, YUTAN_RET_UST, YUTAN_VOL14 = -0.08, 0.0, 1.5
 CEKIC_RSI = 35
 ASKER_RET24 = 0.10
+# §14'te sabit: --faz2'de değiştirilemez (yeni kuralların ve dedektör tabanının 24s hacim eşiği; referans
+# TREND_DIP_RSI2'nin büyük hacim eşiği §12.2 çalıştırmasıyla aynı kalsın)
+FAZ2_MIN_HACIM, FAZ2_BUYUK_HACIM = 5e6, 2e7
+# §14'ün dönem ve evreni: farklı verilirse çalışır ama rapor ve JSON 'ön kayıttan sapma' olarak yazar
+FAZ2_ON_KAYIT = {'baslangic': '2023-01-01', 'ayrim': '2025-01-01', 'evren': 80, 'bitis': None}
 OZELLIK_PARCA = 4096            # yeni özellikler/etiketler bu kadar saatlik parçalarla (168 saatlik pencere belleği)
 KLINE_EKI = '_klines'           # KlineDeposu önbellek dosyası: '<SYM>_1h_klines.pkl' (MumDeposu: '<SYM>_1h.pkl')
 FAZ2_SUTUNLAR = list(mo.YENI_OZELLIKLER) + ['gercek_hacim', 'ucus10', 'max_yukari_24s']   # --faz2 işlem sütunları
@@ -224,13 +229,13 @@ YENI_KURAL_ACIKLAMA = {
     'BOT_GERCEK': 'BOT_VEKILI sinyali ve GERCEK_HACIM (bugünkü botun yöntemi, sahte pompa elenmiş); KADEMELI',
     'SESSIZ_BIRIKIM': f"|ret24| <= %{SESSIZ_RET24 * 100:g}, kapanış > EMA50, alici_payi6 >= {SESSIZ_ALICI6:g}, "
                       f"islem_orani >= {SESSIZ_ISLEM:g}, buyuk_lot_orani <= {SESSIZ_LOT:g}, hacim_yogunlugu24 <= "
-                      f"{SESSIZ_YOGUNLUK:g}, 24s hacim yeterli, BTC EMA200 üstü; KADEMELI",
+                      f"{SESSIZ_YOGUNLUK:g}, 24s hacim >= 5M, BTC EMA200 üstü; KADEMELI",
     'YUTAN_TREND': f"yutan_boga, kapanış > EMA50 > EMA200, -%{-YUTAN_RET_ALT * 100:g} <= ret24 <= "
-                   f"%{YUTAN_RET_UST * 100:g}, vol_ratio14 >= {YUTAN_VOL14:g}, 24s hacim yeterli, BTC EMA200 üstü; "
+                   f"%{YUTAN_RET_UST * 100:g}, vol_ratio14 >= {YUTAN_VOL14:g}, 24s hacim >= 5M, BTC EMA200 üstü; "
                    "KADEMELI",
-    'CEKIC_DIP': f"cekic, RSI14 < {CEKIC_RSI}, kapanış > EMA200, 24s hacim yeterli, BTC EMA200 üstü; ORTA_BANT",
+    'CEKIC_DIP': f"cekic, RSI14 < {CEKIC_RSI}, kapanış > EMA200, 24s hacim >= 5M, BTC EMA200 üstü; ORTA_BANT",
     'UC_ASKER': f"uc_beyaz_asker, ham klines USDT hacmi qv[t] > qv[t-1] > qv[t-2], kapanış > EMA50, ret24 <= "
-                f"%{ASKER_RET24 * 100:g}, 24s hacim yeterli, BTC EMA200 üstü; KADEMELI",
+                f"%{ASKER_RET24 * 100:g}, 24s hacim >= 5M, BTC EMA200 üstü; KADEMELI",
 }
 OZELLIKLER = ['ret24', 'ret6', 'rsi14', 'rsi2', 'vol_ratio6', 'vol_ratio14', 'atr_pct', 'ema50_uzaklik',
               'ema200_uzaklik', 'bbw_pct', 'btc_ret24', 'btc_ema200_uzaklik', 'saat_sin', 'saat_cos', 'log_vol24',
@@ -1612,6 +1617,8 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
               if faz2 else 'STRATEJİ LABORATUVARI')
     y = [f"{baslik} | girişler {meta['baslangic']} → {meta['bitis']} (çıkışlar {meta['veri_sonu']}'e "
          f"kadarki veriyle) | kuruluş/sınama ayrımı {meta['ayrim']} | 1 saatlik mumlar",
+         *([f"ÖN KAYITTAN SAPMA (§14): {'; '.join(meta['on_kayit_sapmalari'])}"]
+           if meta.get('on_kayit_sapmalari') else []),
          f"Evren: bugünün en hacimli {meta['evren']} USDT paritesi + BTC; kullanılan {meta['parite']} parite "
          f"(sabit coin çıkarılan: {meta['sabit_coin']}, verisi olmayan: {meta['verisiz']}) | "
          f"min hacim {meta['min_hacim'] / 1e6:.0f}M, büyük hacim {meta['buyuk_hacim'] / 1e6:.0f}M USDT | "
@@ -1736,6 +1743,9 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
               "AI varyantı: <KURAL>+AI = kuralın, o ayın modelinin eşiğini geçen işlemleri (kombolarda ve BTC_TREND'de "
               "AI yok)."]
     y += ['Bilinen sınırlar:',
+          '  - Dahil sınırlar (ör. |ret24| <= %3, ret24 <= %10) fiyattan hesaplanan oranla karşılaştırılır: tam %3/%10 '
+          'olan bir hareket kayan nokta yüzünden 1e-16 kadar dışarıda kalabilir (1. aşamadaki kurallarla aynı; ön '
+          'kayıtlı tanım değiştirilmedi).',
           '  - Evren bugünün en hacimli paritelerinden oluşur; dönem içinde delist olanlar yok (hayatta kalma '
           'yanlılığı, sonuçlar iyimser).',
           '  - 1 saatlik mum içi yol yaklaşıktır: yeşil mumda önce dip, kırmızıda önce tepe varsayılır.',
@@ -1812,6 +1822,8 @@ def calistir(ex, a, simdi_ms=None, log=print):
     faz2 = bool(getattr(a, 'faz2', False))
     if faz2 and list(a.kurallar) != list(KURALLAR):
         raise ValueError("--faz2 ön kayıtlı 14 satırı (8 referans + 6 yeni kural) çalıştırır; --kurallar verilemez")
+    if faz2 and faz2_esik_hatasi(a):
+        raise ValueError(faz2_esik_hatasi(a))
     cikti = FAZ2_CIKTI if faz2 and a.cikti == VARSAYILAN_CIKTI else a.cikti
     ai = bool(a.ai) and not faz2                         # 2. aşamada AI yok (§14)
     cikti_dizini = os.path.dirname(os.path.abspath(cikti))
@@ -1928,6 +1940,7 @@ def calistir(ex, a, simdi_ms=None, log=print):
             'surumler': kutuphane_surumleri(), 'sure_sn': time.time() - t_bas}
     if faz2:
         meta.update(faz2=True, referans=an['referans'], yeni_kurallar=list(YENI_KURALLAR),
+                    on_kayit_sapmalari=faz2_sapmalari(a),
                     yeni_ozellikler=list(mo.YENI_OZELLIKLER),
                     gercek_hacim={'islem_orani_min': GH_ISLEM_ORANI, 'buyuk_lot_orani_max': GH_BUYUK_LOT,
                                   'alici_payi6_min': GH_ALICI_PAYI6, 'hacim_yogunlugu24_max': GH_YOGUNLUK},
@@ -1980,7 +1993,8 @@ def arguman_ayristirici():
     ap.add_argument('--ayrim', default='2025-01-01', help='kuruluş / sınama ayrımı (girişe göre)')
     ap.add_argument('--evren', type=_negatif_olmayan_tam, default=80, help='bugünün en hacimli N USDT paritesi (+ BTC)')
     ap.add_argument('--min-hacim', type=float, default=5e6,
-                    help='ERKEN/SIKISMA/YATAY_DONUS: 24 saatlik hacim alt sınırı (USDT)')
+                    help="ERKEN/SIKISMA/YATAY_DONUS ve --faz2'de SESSIZ/YUTAN/CEKIC/ASKER ile dedektör tabanı: 24 saatlik "
+                         "hacim alt sınırı (USDT; --faz2'de 5e6 sabit)")
     ap.add_argument('--buyuk-hacim', type=float, default=2e7,
                     help='TREND_DIP_RSI2: 30 günlük ortalama günlük hacim alt sınırı (USDT)')
     ap.add_argument('--butce', type=_pozitif(float, '--butce'), nargs='+', default=[450.0, 90.0], help='bütçeler (USDT)')
@@ -1997,11 +2011,29 @@ def arguman_ayristirici():
     return ap
 
 
+def faz2_esik_hatasi(a) -> Optional[str]:
+    """--faz2'de §14'ün sabit hacim eşikleri değiştirilemez (yeni 4 kuralın ve dedektör tabanının 24s hacim eşiği,
+    referans TREND_DIP_RSI2'nin büyük hacim eşiği). Hata mesajı ya da None."""
+    if float(a.min_hacim) != FAZ2_MIN_HACIM or float(a.buyuk_hacim) != FAZ2_BUYUK_HACIM:
+        return (f"--faz2'de hacim eşikleri ön kayıtta sabit (§14): --min-hacim {FAZ2_MIN_HACIM:g}, --buyuk-hacim "
+                f"{FAZ2_BUYUK_HACIM:g} olmalı")
+    return None
+
+
+def faz2_sapmalari(a) -> List[str]:
+    """§14'ün dönem/evren tanımından sapmalar (çalışmaya engel değil; rapor başlığına ve JSON'a yazılır)."""
+    simdi = {'baslangic': a.baslangic, 'ayrim': a.ayrim, 'evren': a.evren, 'bitis': a.bitis}
+    return [f"--{k} {simdi[k]} (ön kayıt: {v if v is not None else 'son tamamlanmış ay'})"
+            for k, v in FAZ2_ON_KAYIT.items() if simdi[k] != v]
+
+
 def main(argv=None):
     ap = arguman_ayristirici()
     a = ap.parse_args(argv)
     if a.faz2 and list(a.kurallar) != list(KURALLAR):
         ap.error("--faz2 ön kayıtlı 14 satırı (8 referans + 6 yeni kural) çalıştırır; --kurallar verilemez")
+    if a.faz2 and faz2_esik_hatasi(a):
+        ap.error(faz2_esik_hatasi(a))
     import ccxt
     ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
     ex.rateLimit = max(ex.rateLimit or 0, 100)   # botla aynı IP limiti paylaşılıyor

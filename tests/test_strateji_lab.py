@@ -2309,6 +2309,7 @@ def test_faz2_referans_kurallar_ayni_yeni_satirlar_karar_ve_rapor(tmp_path, monk
     assert set(an['karar']) == set(YENI6) and an['referans'] == REF8
     metin = (tmp_path / 'f2_rapor.txt').read_text(encoding='utf-8')
     assert sl.KARAR_KURALI_FAZ2 in metin and sl.KARAR_KURALI not in metin
+    assert 'ÖN KAYITTAN SAPMA (§14): --ayrim 2023-07-01' in metin     # kısa test dönemi sapma olarak yazılır
     assert 'Karar YALNIZ 6 yeni satıra uygulanır: ' + ', '.join(YENI6) in sl.KARAR_KURALI_FAZ2
     for bolum in ('0) KARAR KURALI', '1) KURALLAR', '7) KARAR', '8) REJİM', '9) DEDEKTÖR KARNESİ (bilgi',
                   '10) SÜZGEÇ KATKISI (bilgi', 'GERCEK_HACIM (karar mumunda hepsi)'):
@@ -2458,3 +2459,19 @@ def test_faz2_uctan_uca_gelecek_bilgisi_kullanmaz(tmp_path, monkeypatch):
     ka = pa[pa['cikis_ts'] <= T]
     for kol in ('cikis_ts', 'cikis_fiyat', 'getiri_k1', 'sure_saat'):
         assert _esit(ka[kol].to_numpy(), pb.loc[ka.index, kol].to_numpy()), kol
+
+
+def test_faz2_on_kayit_esikleri_kilitli_ve_sapmalar_yazilir(tmp_path):
+    """§14: --faz2'de hacim eşikleri değiştirilemez (main argparse hatası, calistir ValueError); dönem/evren farklıysa
+    çalışır ama sapmalar listelenir."""
+    for ek in (['--min-hacim', '1e6'], ['--buyuk-hacim', '3e7']):
+        with pytest.raises(SystemExit):
+            sl.main(['--faz2', *ek])
+        with pytest.raises(ValueError, match='ön kayıtta sabit'):
+            sl.calistir(None, _arguman(tmp_path, '--faz2', *ek))
+    a = _arguman(tmp_path, '--faz2')
+    assert sl.faz2_esik_hatasi(a) is None
+    sapma = sl.faz2_sapmalari(a)
+    assert any(x.startswith('--evren 20') for x in sapma) and any(x.startswith('--bitis 2023-10-01') for x in sapma)
+    on_kayit = sl.arguman_ayristirici().parse_args(['--faz2'])
+    assert sl.faz2_sapmalari(on_kayit) == [] and sl.faz2_esik_hatasi(on_kayit) is None

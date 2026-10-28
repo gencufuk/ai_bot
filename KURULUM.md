@@ -213,6 +213,15 @@ screen -dmS kademe2 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/v18
 cd /root && nice -n 10 venv/bin/python -u tools/strateji_arastirma.py > strateji.log 2>&1
 cat /root/strateji_rapor.txt
 ```
+**Strateji laboratuvarı 2. aşama** (ANALIZ §14: mum formasyonları, gerçek hacim süzgeci, 6 yeni kural, dedektör karnesi)
+- Ham Binance mumlarını (işlem adedi ve alıcı hacmi dahil) ayrı bir önbelleğe indirir. İlk çalıştırma ~2800 API isteği yapar ve 15–25 dk sürer; ek bellek ~150–300 MB.
+- Makineyle aynı anda çalışabilir.
+- Kod güncellemesi için önce makineyi durdurun (`screen -S makine -X quit`), güncelledikten sonra yeniden başlatın.
+```bash
+screen -dmS faz2 bash -c "cd /root && nice -n 10 venv/bin/python -u tools/strateji_lab.py --faz2 > faz2.log 2>&1"
+tail -n 3 /root/faz2.log                       # bitince son satır "Çıktılar: ..."
+gzip -kf /root/strateji_lab_faz2_islemler.csv  # gönderin: strateji_lab_faz2_rapor.txt, _rapor.json, _islemler.csv.gz
+```
 **Strateji laboratuvarı** (ANALIZ §12): coin yükselmeden giren, yüksek isabetli ve AI süzgeçli kuralların 1 saatlik
 veride testi. Önceden yazılmış karar kuralıyla, 2023'ten son tamamlanmış aya kadar. İlk çalıştırma ~2800 API isteği,
 ~15-25 dk, ek bellek ~200-300 MB:
