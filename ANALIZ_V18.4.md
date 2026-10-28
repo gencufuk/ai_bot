@@ -1089,4 +1089,54 @@ Laboratuvar (§12.2) hiçbir kuralın kârlı olmadığını gösterdiği için 
   - önbellekten 36 sn;
   - ek bellek ~150 MB.
 
-**Sonuçlar** sunucu çalıştırmasından sonra §14.1'e yazılacak.
+**Sonuçlar:** §14.1.
+
+### 14.1 Sonuçlar (29 Ekim, 89 sunucusu)
+**Çalıştırma.** 78 parite (2 sabit coin çıkarıldı, 1 paritenin verisi yok), girişler 2023-01-01 → 2026-10-01, ham mumlar. Rapor: `veri/arastirma_2026-10-29/strateji_lab_faz2_rapor.txt`. Referans kuralların sonuçları §12.2'dekilere çok yakın; ufak farkın nedeni evrenin bugünün listesiyle yeniden seçilmesi.
+
+**Karar: 6 yeni satırın hiçbiri geçmedi.**
+
+| Satır | Kuruluş beklenti | Sınama beklenti [P(>0)] | Sınama n | 450 USDT, sınama (21 ay) |
+|---|---|---|---|---|
+| ERKEN_GERCEK | %−1.06 | %+0.24 [0.61] | 52 | +2.5 |
+| BOT_GERCEK | %−0.54 | %−0.02 [0.45] | 590 | −2.2 |
+| SESSIZ_BIRIKIM | %+0.02 | %+0.30 [0.77] | 138 | +8.3 |
+| YUTAN_TREND | %−0.11 | %−0.04 [0.44] | 312 | −2.5 |
+| CEKIC_DIP | %−0.69 | %−0.21 [0.32] | 66 | −2.8 |
+| UC_ASKER | %−0.26 | %−0.28 [0.04] | 2568 | −139.5 |
+
+- **İki dönemde de artıda olan tek satır SESSIZ_BIRIKIM.** Fark çok küçük ve güven aralığı sıfırı geniş biçimde içeriyor. Maliyet iki katında eksiye düşüyor ve ayların yalnız %52'si artıda.
+- **Dedektör karnesi, kuruluş dönemi:** SESSIZ_BIRIKIM rastgele seçimden kötü (0.68 kat); sınamada 1.35 kat. Tutarlı değil.
+- **Gerçek hacim süzgeci bugünkü botun yöntemini kurtarmıyor.** Kuruluşta süzgeçten geçen işlemler elenenlerden kötü: %−0.63'e karşı %−0.27. Sınamada fark yok: %−0.19'a karşı %−0.16.
+
+**Dedektör karnesi ("erken fark etme").**
+- **Taban oran:** 24 saatlik hacmi 5M'yi geçen parite-saatlerinin %7.5–7.7'si 24 saat içinde −%5'ten önce +%10 görüyor.
+- **Sinyallerin yakaladığı oran:**
+  - Bugünkü botun vekili: %12.3–12.9, yani **1.6–1.7 kat**.
+  - Süzgeçli hâli (BOT_GERCEK): %11.8–14.4, yani 1.5–1.9 kat.
+  - Yutan boğa: 1.4–1.5 kat.
+  - Erken birikim: 1.2–1.3 kat.
+  - Yatay piyasa yöntemi: 0.4 kat (beklendiği gibi uçmayanları seçiyor).
+- **Yani sinyaller uçacak coini rastgele seçimden belirgin biçimde daha sık buluyor, ama yine de sinyallerin ~%87'si uçmuyor.**
+- **İşlem sonucu (BOT_VEKILI):**
+  - Uçan sinyallerin ortalama gerçekleşen getirisi yalnız %+4.4–4.6. Bunların ~%30'u uçuştan önce %2'lik ilk stopla çıkıyor.
+  - Uçmayanlar ortalama %−0.87 ile −0.97 arası.
+  - Sonuç: 0.129 × 4.59 − 0.871 × 0.87 ≈ %−0.17. Tespit gücü komisyon ve stoplardan sonra kâra dönüşmüyor.
+  - Daha geniş stop uçanları tutar ama uçmayan %87'nin kaybını büyütür. Bu §11.9'da (GENIS5/UCAN) zaten denendi ve daha kötü çıktı.
+
+**Rejim (BOT_VEKILI).** Önceki bulgu tekrarlandı: düşen trend iki dönemde de en kötüsü (%−0.76 ve −0.41). Yatay, yükselen trendden kötü değil (sınama %0.00'a karşı −0.18).
+
+**Maliyet.**
+- Maliyet yarıya inince (k=0.5) birkaç satır küçük bir artıya geçiyor:
+  - SESSIZ_BIRIKIM %+0.48,
+  - ERKEN_GERCEK %+0.42,
+  - YUTAN_TREND %+0.22,
+  - BOT_GERCEK %+0.16.
+- Ancak k=0.5'e karşılık gelen maliyet (taraf başı %0.05 komisyon, kaymalar yarıda) VIP0 hesabıyla ulaşılabilir değil. BNB ile komisyon %0.075.
+
+**Sonuç.** 1. ve 2. aşamada 21 kural test edildi; hiçbiri önceden yazılmış kuralı geçmedi. Mum okuma, hacim kalitesi, rejim ayrımı ve AI denemeleri arasında:
+- tespit gücü gösteren sinyaller var (1.5–2 kat);
+- ama hiçbiri komisyon ve kayma sonrasında iki dönemde tutarlı kâr üretmiyor.
+
+Makine kâğıt modda veri toplamaya devam ediyor; gerçek emir yok. Bir sonraki adım, makinenin canlı hafızası (emir defteri dahil) birkaç ay biriktikten sonra 3. aşama.
+
