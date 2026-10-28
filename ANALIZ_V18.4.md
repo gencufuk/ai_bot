@@ -1001,3 +1001,41 @@ Bu ek, 212'deki ilk laboratuvar çalıştırmasının sonuçları görülmeden y
 - Kademe2 doğrulamasına gerek kalmadı. KADEMELI çıkış bu laboratuvarda BOT_VEKILI'nin çıkışı ve iki dönemde de eksi; 2025'in 15 dakikalık simülasyonu da %−0.39 bulmuştu.
 - Kâr getirebilecek bir yöntem, gerçek parayla çalıştırılmadan önce aynı önceden kayıtlı kuralla ve en az birkaç ay kâğıt üzerinde (gerçek emir vermeden) denenmeli.
 
+## 13. Makine 1. aşama: 7/24 tarama, hafıza ve kâğıt işlem (26–28 Ekim)
+**Kullanıcının hedefi:** Coini erken fark edip alan, 7/24 kendi takip eden ve her şeyi bir veritabanına yazıp veri madenciliğiyle öğrenen bir al-sat makinesi.
+
+Laboratuvar (§12.2) hiçbir kuralın kârlı olmadığını gösterdiği için ilk aşama altyapı ve kâğıt işlemden oluşuyor. Gerçek para ancak bir kural önceden kayıtlı kuralı ve birkaç haftalık kâğıt işlemi geçerse ayrı bir kararla gündeme gelir.
+
+**Kod.**
+- `makine.py`: döngü, kâğıt işlem, rapor, komut satırı.
+- `sniper/hafiza.py`: SQLite hafıza, mum toplayıcı, evren seçimi.
+- `sniper/makine_ozellikleri.py`: mum formasyonları, hacim kalitesi, emir defteri özellikleri.
+- `tests/test_makine.py`: 78 test.
+
+**Tasarım.**
+- **Tek kod:** Göstergeler, sinyaller, kombolar ve çıkışlar `tools/strateji_lab.py`'nin kendi işlevleri. Testler, makinenin kâğıt işlemlerinin laboratuvarın aynı mumlardaki işlemleriyle 8 stratejide birebir aynı olduğunu doğruluyor. Yeniden başlatma ve kesinti senaryoları da kapsanıyor.
+- **Hafıza:** Her saat her evren paritesi için 30 özellik yazılıyor:
+  - 15'i laboratuvardan geliyor;
+  - 15'i yeni: mum formasyonları (doji, çekiç, kayan yıldız, yutan boğa/ayı, üç beyaz asker) ve hacim kalitesi (işlem adedi oranı, iri lot oranı, alıcı payı, hacmin tek mumda yığılması).
+
+  Ayrıca:
+  - hareketli paritelerin emir defteri kaydediliyor (geçmişi olmadığı için bugünden toplanıyor);
+  - 24 saat sonra ileri etiketler ekleniyor: 1/4/24 saatlik getiri, en yüksek ve en düşük değer, +%10'un −%5'ten önce gelip gelmediği, +%20'nin −%7'den önce gelip gelmediği;
+  - özellik ve kural tanımlarının sürümü saklanıyor.
+- **Güvenlik:** ccxt istemcisi anahtarsız kuruluyor ve salt okunur bir sarmalayıcıdan geçiyor: yalnız herkese açık okuma uçlarına izin var. Telegram belirteci günlüklerde maskeleniyor.
+- **İşletim:**
+  - tek kopya kilidi;
+  - kapanmamış mumu almama (ardından mum gelmiyorsa kapanıştan 5 dk sonra kapanmış sayılır);
+  - kesintiden sonra geri doldurma;
+  - kaçırılan saatlerde geriye dönük işlem açmama;
+  - disk ve saat farkı uyarıları;
+  - günlük Telegram karnesi ve sorun uyarıları.
+- **İnceleme:** Dört bağımsız inceleme yapıldı (laboratuvarla birebir aynılık, işletim, güvenlik, veri). Kritik bulgu çıkmadı; 9 önemli ve 19 küçük bulgu vardı. 23'ü düzeltildi, 5'i yerinde görülmedi.
+- **Sonradan düzeltilen test:** Komut satırı testi saat başından sonraki ilk 5 dakikada düşüyordu. Testin sahte verisinde karar mumunun ardından mum yoktu; makinenin kendi kuralı doğru çalışıyordu.
+- **Ölçümler:** 150 parite × 1500 saat sentetik veriyle tur süresi ~1 sn (ilk tur ~2 sn). Veritabanı ilk kurulumda ~25 MB, sonra günde ~3–4 MB büyüyor.
+
+**Sonraki aşamalar.**
+- **2. aşama:** Mum formasyonları ve hacim kalitesi 2023–26 verisinde sınanacak. Binance mumlarındaki işlem adedi ve alıcı hacmi geçmiş için de var.
+- **3. aşama:** Makinenin hafızasında, ay ay ileri yürüyen veri madenciliği ve AI yapılacak.
+- **Gerçek işlem:** Yalnız kapıdan geçen bir kural için, küçük tutarla ve otomatik durdurmayla.
+

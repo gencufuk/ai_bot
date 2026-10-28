@@ -230,6 +230,32 @@ tail -n 3 /root/lab2.log
 gzip -k /root/strateji_lab2_islemler.csv  # yüklemek için: strateji_lab2_rapor.txt, _rapor.json, _islemler.csv.gz
 ```
 
+## Makine (1. aşama: 7/24 tarama + hafıza + kâğıt işlem; gerçek emir YOK)
+Her saat en hacimli ~150 USDT paritesini tarar. Her paritenin özelliklerini (göstergeler, mum formasyonları, hacim kalitesi) ve hareketli paritelerin emir defterini `makine.db` veritabanına yazar. 24 saat sonra her satıra "ne oldu" etiketini ekler. Test aracındaki 8 kuralı kâğıt üzerinde işletir. Her sabah 09:00'da (TSİ) Telegram'a karne gönderir.
+
+API anahtarı okumaz ve emir veremez: yalnız herkese açık piyasa verisi kullanır. Telegram için `.env`'deki `TELEGRAM_TOKEN` ve `TELEGRAM_CHAT_ID` yeterlidir. Veritabanı günde birkaç MB büyür; 400 günden eski satırlar silinir. 1 GB'tan az boş disk kalınca uyarır.
+
+1. Kodu güncelleyin (yukarıdaki "Kurulu sistemi güncelleme" adımları: zip, `--guncelle`). Güncelleme, makine çalışırken reddedilir: önce `screen -S makine -X quit`.
+2. Bir deneme turu çalıştırın. İlk çalıştırma her parite için 1500 saatlik geçmişi indirir; birkaç dakika sürer:
+   ```bash
+   cd /root && venv/bin/python makine.py --tek-tur
+   venv/bin/python makine.py --durum
+   ```
+3. Sürekli çalıştırın (her saat başından ~20 sn sonra bir tur):
+   ```bash
+   cd /root && screen -dmS makine bash -c "venv/bin/python -u makine.py"
+   ```
+4. Sunucu yeniden başlarsa makine de başlasın:
+   ```bash
+   (crontab -l 2>/dev/null | grep -v 'makine.py'; echo '@reboot sleep 90 && cd /root && screen -dmS makine bash -c "venv/bin/python -u makine.py"') | crontab -
+   ```
+5. İzleme:
+   - `venv/bin/python makine.py --durum`: son turlar ve açık kâğıt işlemler; salt okunur, makine çalışırken de olur.
+   - `venv/bin/python makine.py --rapor`: günlük raporu hemen yazdırır. `--telegram` eklenirse raporu Telegram'a da gönderir.
+   - `tail -n 20 /root/makine.log`: son çalışma kayıtları.
+   - Dosyalar: `makine.db` (+ `-wal`/`-shm`), `makine.db.lock`, `makine.log`.
+6. Durdurmak için: `screen -S makine -X quit`. Kapalıyken geçen saatler `KACIRILDI` olarak kaydedilir; o saatlerde geriye dönük kâğıt işlem açılmaz.
+
 ## Geri dönüş
 - Kod güncellemesini geri almak: botu durdurun, `eski_kod_<tarih>/` içindekileri `/root`'a geri taşıyın.
 - İlk kurulumu geri almak: `python3 /root/tools/temiz_kurulum.py --geri-al /root/eski_bot_<tarih>`.
@@ -237,6 +263,7 @@ gzip -k /root/strateji_lab2_islemler.csv  # yüklemek için: strateji_lab2_rapor
 
 ## Pakettekiler
 - `ai_bot.py` (V18.4), `ai_trainer.py` (V3), `shadow_labeler.py` (V2), `backfill_sinyaller.py`, `sniper/`
+- `makine.py`: 7/24 tarayıcı, hafıza (`sniper/hafiza.py`, `sniper/makine_ozellikleri.py`) ve kâğıt işlem; gerçek emir yok
 - `tools/`:
   - `temiz_kurulum.py`: kurulum ve güncelleme
   - `veri_birlestir.py`: veri birleştirme
