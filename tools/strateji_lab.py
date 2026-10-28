@@ -65,6 +65,32 @@ günü bloklu bootstrap (2000 örnek). Bütçe: --butce (450, 90) USDT, işlem b
 sinyal atlanır, bileşik getiri yok. Raporun 8. bölümü her kuralın işlemlerini karar mumundaki BTC rejimine göre ayırır
 (bilgi amaçlı; karar kuralını değiştirmez).
 
+2. AŞAMA (--faz2; ANALIZ_V18.4.md §14 ön kaydı: mum formasyonları ve hacim kalitesi, sonuçlardan önce sabitlendi):
+  Veri: ham Binance 1s klines (KlineDeposu: publicGetKlines; işlem adedi ve alıcı (taker buy) USDT hacmi dahil; aynı
+  önbellek/sayfalama/kapanmış mum kuralları, ayrı önbellek dosyaları '<SYM>_1h_klines.pkl'). Satırlar: 8 referans kural
+  (BOT_VEKILI, ERKEN_BIRIKIM, SIKISMA_KIRILIM, TREND_DIP_RSI2, YUKSEK_ISABET, YATAY_DONUS, REJIM_KOMBO, REJIM_KOMBO_BOT;
+  tanımları değişmez, aynı mumlarda 1. aşamayla birebir aynı işlemler) + 6 yeni kural; BTC_TREND ve AI yok.
+  Yeni özellikler karar mumu t'de sniper/makine_ozellikleri.yeni_ozellikler ile (makinenin canlıda kullandığı kod; ham
+  klines qv/n/aqv). GERCEK_HACIM: islem_orani >= 2.0, buyuk_lot_orani <= 1.5, alici_payi6 >= 0.55,
+  hacim_yogunlugu24 <= 0.25 (NaN: geçmez).
+  ERKEN_GERCEK     ERKEN_BIRIKIM sinyali ve GERCEK_HACIM; KADEMELI
+  BOT_GERCEK       BOT_VEKILI sinyali ve GERCEK_HACIM; KADEMELI
+  SESSIZ_BIRIKIM   |ret24| <= %3; kapanış > EMA50; alici_payi6 >= 0.60; islem_orani >= 1.5; buyuk_lot_orani <= 1.2;
+                   hacim_yogunlugu24 <= 0.20; 24s hacim >= --min-hacim; BTC EMA200 üstünde; KADEMELI
+  YUTAN_TREND      yutan_boga; kapanış > EMA50 > EMA200; -%8 <= ret24 <= 0; vol_ratio14 >= 1.5; 24s hacim yeterli;
+                   BTC EMA200 üstünde; KADEMELI
+  CEKIC_DIP        cekic; RSI14 < 35; kapanış > EMA200; 24s hacim yeterli; BTC EMA200 üstünde; ORTA_BANT
+  UC_ASKER         uc_beyaz_asker; ham klines USDT hacmi qv[t] > qv[t-1] > qv[t-2]; kapanış > EMA50; ret24 <= %10; 24s
+                   hacim yeterli; BTC EMA200 üstünde; KADEMELI
+  (ret24, EMA'lar, RSI14, vol_ratio14 ve 24s hacim eski kurallardaki tanımlarla: hacim V x C.) Paritede tek pozisyon,
+  veri sonu kuralı, maliyetler ve çıkışlar eski kurallardaki gibi. KARAR (aynı 5 koşul, P(>0) >= 0.99) YALNIZ 6 yeni
+  satıra uygulanır; referans satırlar tablolarda '*' (referans: §12.2'de karara bağlandı) ile işaretlenir.
+  Bilgi bölümleri (karar kuralı değildir): 9) DEDEKTÖR KARNESİ: her kuralın işleme dönüşen sinyallerinde karar
+  kapanışından ileri etiketler (makine_ozellikleri.ileri_etiketler: ucus10 = 24 saatte +%10'a -%5'ten önce dokunma,
+  max_yukari_24s) ve aynı dönemde 24s hacmi >= --min-hacim olan bütün parite-saatlerinin taban oranı, kat = oran /
+  taban. 10) SÜZGEÇ KATKISI: ERKEN_BIRIKIM ve BOT_VEKILI işlemleri karar mumunda GERCEK_HACIM'i geçen / geçmeyen
+  olarak (alt küme) ve süzgeçli kuralın kendi işlem dizisi: n, kazanma %, beklenti, ucus10 oranı.
+
 Bilinen sınırlar:
   - Evren bugünün en hacimli --evren paritesidir: dönem içinde delist olan coinler yok (hayatta kalma yanlılığı).
   - 1 saatlik mum içi fiyat yolu yaklaşıktır (gerçek sıra bilinmez); stop/hedef aynı mumdaysa sıra mum renginden.
@@ -78,14 +104,22 @@ Kullanım (sunucuda, bot çalışırken de olur; API anahtarı gerekmez, yalnız
   cd /root && venv/bin/python tools/strateji_lab.py                  # 80 parite, 2023'ten son tamamlanmış aya
     (ilk çalıştırma ~2800 API isteğiyle 15-25 dk; sonrakiler önbellekten birkaç dakika; ek bellek ~200-300 MB)
   cd /root && venv/bin/python tools/strateji_lab.py --kurallar ERKEN_BIRIKIM YUKSEK_ISABET --ai-yok   # hızlı deneme
+  cd /root && venv/bin/python tools/strateji_lab.py --faz2           # 2. aşama (§14): ham klines, 8 referans + 6 yeni
+    (ilk çalıştırma klines'ı ayrıca indirir: ~2800 API isteği; sonrakiler önbellekten: 81 parite x 3.9 yıllık sentetik
+    veride ~30 sn, ek bellek ~140 MB)
 Çıktılar: strateji_lab_rapor.txt (özet), strateji_lab_rapor.json, strateji_lab_islemler.csv (her işlem bir satır;
-trend/yatay ayrımı için 'rejim' ve 'bilesen' sütunları: tek dosya, Excel'de süzülür)
+trend/yatay ayrımı için 'rejim' ve 'bilesen' sütunları: tek dosya, Excel'de süzülür).
+--faz2 çıktıları (--cikti verilmezse; 1. aşama raporunun üzerine yazılmaz): strateji_lab_faz2_rapor.txt (0-8. bölümler
++ 9) DEDEKTÖR KARNESİ + 10) SÜZGEÇ KATKISI; karar yalnız 6 yeni satır), strateji_lab_faz2_rapor.json ('dedektor',
+'suzgec', 'referans' anahtarları), strateji_lab_faz2_islemler.csv (ek sütunlar: 15 yeni özellik (YENI_OZELLIKLER),
+gercek_hacim 0/1/boş, karar mumunun ileri etiketleri ucus10 0/1/boş ve max_yukari_24s)
 """
 import argparse
 import heapq
 import json
 import math
 import os
+import pickle
 import sys
 import time
 from collections import Counter
@@ -95,12 +129,15 @@ import numpy as np
 import pandas as pd
 
 KOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VARSAYILAN_CIKTI = os.path.join(KOK, 'strateji_lab')
+FAZ2_CIKTI = os.path.join(KOK, 'strateji_lab_faz2')
 for _yol in (KOK, os.path.join(KOK, 'tools')):
     if _yol not in sys.path:
         sys.path.insert(0, _yol)
 
 import backfill_sinyaller as bf  # noqa: E402
 import v184_simulasyon as vs  # noqa: E402
+from sniper import makine_ozellikleri as mo  # noqa: E402  (2. aşama: makineyle aynı özellik/etiket kodu)
 
 SAAT_MS = vs.SAAT_MS
 GUN_MS = vs.GUN_MS
@@ -136,13 +173,36 @@ REJIM_YOK = 'BILINMIYOR'
 KURAL_CIKIS = {'BOT_VEKILI': 'KADEMELI', 'ERKEN_BIRIKIM': 'KADEMELI', 'SIKISMA_KIRILIM': 'KADEMELI',
                'TREND_DIP_RSI2': 'RSI2_CIKIS', 'YUKSEK_ISABET': 'HEDEF_STOP', 'YATAY_DONUS': 'ORTA_BANT',
                'REJIM_KOMBO': 'KOMBO', 'REJIM_KOMBO_BOT': 'KOMBO', 'BTC_TREND': 'GUNLUK_MA100'}
-KURALLAR = list(KURAL_CIKIS)
+KURALLAR = list(KURAL_CIKIS)    # §12 / §12.1 kuralları: --faz2 olmadan (varsayılan) çalıştırılanlar
+# 2. aşama (§14, --faz2): ham klines hacim kalitesi ve mum formasyonları. Yeni kurallar KURALLAR'a girmez: --faz2
+# olmadan araç (ve kuralları KURALLAR'dan seçen makine) eskisi gibi çalışır.
+YENI_KURAL_CIKIS = {'ERKEN_GERCEK': 'KADEMELI', 'BOT_GERCEK': 'KADEMELI', 'SESSIZ_BIRIKIM': 'KADEMELI',
+                    'YUTAN_TREND': 'KADEMELI', 'CEKIC_DIP': 'ORTA_BANT', 'UC_ASKER': 'KADEMELI'}
+YENI_KURALLAR = list(YENI_KURAL_CIKIS)
+KURAL_CIKIS.update(YENI_KURAL_CIKIS)
+REFERANS_KURALLARI = ['BOT_VEKILI', 'ERKEN_BIRIKIM', 'SIKISMA_KIRILIM', 'TREND_DIP_RSI2', 'YUKSEK_ISABET',
+                      'YATAY_DONUS', 'REJIM_KOMBO', 'REJIM_KOMBO_BOT']   # --faz2'de yalnız karşılaştırma (§12.2)
+FAZ2_KURALLARI = REFERANS_KURALLARI + YENI_KURALLAR
+SUZGEC_CIFTLERI = (('ERKEN_GERCEK', 'ERKEN_BIRIKIM'), ('BOT_GERCEK', 'BOT_VEKILI'))   # (süzgeçli, taban kural)
+REFERANS_ISARETI = "referans (§12.2'de karara bağlandı)"
+# GERCEK_HACIM (§14): karar mumu t'de hepsi; girdilerden biri NaN ise süzgeç geçilmez (sinyal yok)
+GH_ISLEM_ORANI, GH_BUYUK_LOT, GH_ALICI_PAYI6, GH_YOGUNLUK = 2.0, 1.5, 0.55, 0.25
+GH_GIRDILERI = ('islem_orani', 'buyuk_lot_orani', 'alici_payi6', 'hacim_yogunlugu24')
+SESSIZ_RET24, SESSIZ_ALICI6, SESSIZ_ISLEM, SESSIZ_LOT, SESSIZ_YOGUNLUK = 0.03, 0.60, 1.5, 1.2, 0.20
+YUTAN_RET_ALT, YUTAN_RET_UST, YUTAN_VOL14 = -0.08, 0.0, 1.5
+CEKIC_RSI = 35
+ASKER_RET24 = 0.10
+OZELLIK_PARCA = 4096            # yeni özellikler/etiketler bu kadar saatlik parçalarla (168 saatlik pencere belleği)
+KLINE_EKI = '_klines'           # KlineDeposu önbellek dosyası: '<SYM>_1h_klines.pkl' (MumDeposu: '<SYM>_1h.pkl')
+FAZ2_SUTUNLAR = list(mo.YENI_OZELLIKLER) + ['gercek_hacim', 'ucus10', 'max_yukari_24s']   # --faz2 işlem sütunları
+FAZ2_TAM_SAYI = list(mo.DESENLER) + ['gercek_hacim', 'ucus10']                 # CSV'de 0/1/boş (NULL)
 AI_KURALLARI = ['BOT_VEKILI', 'ERKEN_BIRIKIM', 'SIKISMA_KIRILIM', 'TREND_DIP_RSI2', 'YUKSEK_ISABET', 'YATAY_DONUS']
 KOMBO_TREND = {'REJIM_KOMBO': 'ERKEN_BIRIKIM', 'REJIM_KOMBO_BOT': 'BOT_VEKILI'}   # TREND_YUKARI bileşeni
 KOMBO_YATAY = 'YATAY_DONUS'                                                        # YATAY bileşeni (iki komboda)
 KISA = {'BOT_VEKILI': 'BOT', 'ERKEN_BIRIKIM': 'ERKEN', 'SIKISMA_KIRILIM': 'SIKISMA', 'TREND_DIP_RSI2': 'RSI2',
         'YUKSEK_ISABET': 'ISABET', 'YATAY_DONUS': 'YATAY', 'REJIM_KOMBO': 'KOMBO', 'REJIM_KOMBO_BOT': 'KOMBO_B',
-        'BTC_TREND': 'BTC_TR'}
+        'BTC_TREND': 'BTC_TR', 'ERKEN_GERCEK': 'ERKEN_G', 'BOT_GERCEK': 'BOT_G', 'SESSIZ_BIRIKIM': 'SESSIZ',
+        'YUTAN_TREND': 'YUTAN', 'CEKIC_DIP': 'CEKIC', 'UC_ASKER': 'ASKER'}
 KURAL_ACIKLAMA = {
     'BOT_VEKILI': '12M+ hacimli en çok yükselen 10 içinde, EMA20 üstü, ATR<=%3, RSI14>55, hacim 2.5x; KADEMELI',
     'ERKEN_BIRIKIM': '24s -%3..+%6, EMA50 üstü ve EMA20>EMA50, RSI14 50-68, 6 saatlik hacim birikimi 2x, 24s '
@@ -157,12 +217,28 @@ KURAL_ACIKLAMA = {
     'REJIM_KOMBO_BOT': 'REJIM_KOMBO gibi, trend bileşeni BOT_VEKILI (bugünkü botun vekili)',
     'BTC_TREND': 'BTC günlük kapanış MA100x1.02 üstü al, MA100x0.98 altı sat',
 }
+GERCEK_HACIM_ACIKLAMA = (f"GERCEK_HACIM (karar mumunda hepsi): islem_orani >= {GH_ISLEM_ORANI:g}, buyuk_lot_orani <= "
+                         f"{GH_BUYUK_LOT:g}, alici_payi6 >= {GH_ALICI_PAYI6:g}, hacim_yogunlugu24 <= {GH_YOGUNLUK:g}")
+YENI_KURAL_ACIKLAMA = {
+    'ERKEN_GERCEK': 'ERKEN_BIRIKIM sinyali ve GERCEK_HACIM; KADEMELI',
+    'BOT_GERCEK': 'BOT_VEKILI sinyali ve GERCEK_HACIM (bugünkü botun yöntemi, sahte pompa elenmiş); KADEMELI',
+    'SESSIZ_BIRIKIM': f"|ret24| <= %{SESSIZ_RET24 * 100:g}, kapanış > EMA50, alici_payi6 >= {SESSIZ_ALICI6:g}, "
+                      f"islem_orani >= {SESSIZ_ISLEM:g}, buyuk_lot_orani <= {SESSIZ_LOT:g}, hacim_yogunlugu24 <= "
+                      f"{SESSIZ_YOGUNLUK:g}, 24s hacim yeterli, BTC EMA200 üstü; KADEMELI",
+    'YUTAN_TREND': f"yutan_boga, kapanış > EMA50 > EMA200, -%{-YUTAN_RET_ALT * 100:g} <= ret24 <= "
+                   f"%{YUTAN_RET_UST * 100:g}, vol_ratio14 >= {YUTAN_VOL14:g}, 24s hacim yeterli, BTC EMA200 üstü; "
+                   "KADEMELI",
+    'CEKIC_DIP': f"cekic, RSI14 < {CEKIC_RSI}, kapanış > EMA200, 24s hacim yeterli, BTC EMA200 üstü; ORTA_BANT",
+    'UC_ASKER': f"uc_beyaz_asker, ham klines USDT hacmi qv[t] > qv[t-1] > qv[t-2], kapanış > EMA50, ret24 <= "
+                f"%{ASKER_RET24 * 100:g}, 24s hacim yeterli, BTC EMA200 üstü; KADEMELI",
+}
 OZELLIKLER = ['ret24', 'ret6', 'rsi14', 'rsi2', 'vol_ratio6', 'vol_ratio14', 'atr_pct', 'ema50_uzaklik',
               'ema200_uzaklik', 'bbw_pct', 'btc_ret24', 'btc_ema200_uzaklik', 'saat_sin', 'saat_cos', 'log_vol24',
               'btc_adx14', 'adx14']
 CSV_SUTUNLAR = (['kural', 'bilesen', 'rejim', 'sembol', 'giris_ts', 'cikis_ts', 'giris_fiyat', 'cikis_fiyat',
                  'cikis_tipi', 'getiri_k05', 'getiri_k1', 'getiri_k2', 'sure_saat'] + OZELLIKLER
                 + ['ai_skor', 'ai_esik', 'ai_secildi'])
+CSV_FAZ2_SUTUNLAR = CSV_SUTUNLAR + FAZ2_SUTUNLAR      # --faz2 işlem CSV'si
 CSV_PARCA = 5000                # CSV bu kadar satırlık parçalarla yazılır (tablonun tam kopyası bellekte tutulmaz)
 AI_SUTUNLARI = ['giris_ts', 'cikis_ts', 'getiri_k1'] + OZELLIKLER          # ai_ileri_yuruyus'un kullandıkları
 ANALIZ_SUTUNLARI = ['kural', 'sembol', 'rejim', 'giris_ts', 'cikis_ts', 'getiri_k05', 'getiri_k1', 'getiri_k2',
@@ -192,6 +268,19 @@ KARAR_KURALI = (
     "  AI varyantı ayrıca: AI karşılaştırmasında (aynı aylarda AI - kural beklentisi) P(fark>0) >= 0.90.\n"
     "  Aksi halde \"KALDI\" (sağlanmayan koşullar listelenir). Bilgi (koşul değil): sınama kazanma oranı >= %70\n"
     "  olanlar \"10'da 7 hedefi\" ile işaretlenir.")
+KARAR_KURALI_FAZ2 = (
+    "KARAR KURALI (2. aşama, ANALIZ §14 ön kaydı; §12'deki 5 koşul aynen, veriye bakılmadan yazıldı):\n"
+    "  Karar YALNIZ 6 yeni satıra uygulanır: " + ', '.join(YENI_KURALLAR) + ".\n"
+    "  Eski kurallar (" + ', '.join(REFERANS_KURALLARI) + ")\n"
+    "  raporda yalnız karşılaştırma içindir (* " + REFERANS_ISARETI + "). AI yok.\n"
+    "  Yeni bir satır ancak şu koşulların HEPSİ sağlanırsa \"GEÇTİ\" sayılır:\n"
+    "  (1) sınama döneminde en az 100 işlem;\n"
+    "  (2) sınama beklentisi (işlem başına ortalama net getiri) > 0 ve gün bloklu bootstrap P(>0) >= 0.99;\n"
+    "  (3) kuruluş beklentisi > 0;\n"
+    "  (4) sınama aylarının (en az 1 işlemi olan takvim ayları) en az %60'ı pozitif;\n"
+    "  (5) maliyet 2 katındayken (k=2) sınama beklentisi > 0.\n"
+    "  Aksi halde \"KALDI\" (sağlanmayan koşullar listelenir). Bilgi (koşul değil): sınama kazanma oranı >= %70\n"
+    "  olanlar \"10'da 7 hedefi\" ile işaretlenir. 9) ve 10) bölümleri bilgi amaçlıdır; karar kuralı değildir.")
 
 
 # ------------------------------------------------------------------------------------------
@@ -260,6 +349,146 @@ def izgaraya_yerlestir(d: np.ndarray, g0: int, n: int):
         M[bozuk] = np.nan
         M[~(M[:, 4] > 0) | ~np.isfinite(M[:, 4]), 4] = np.nan
     return M[:, 0].copy(), M[:, 1].copy(), M[:, 2].copy(), M[:, 3].copy(), M[:, 4].copy()
+
+
+# ------------------------------------------------------------------------------------------
+# 2. aşama verisi: ham Binance 1 saatlik klines (işlem adedi ve alıcı hacmi dahil)
+# ------------------------------------------------------------------------------------------
+def klines_satirlari(ham) -> np.ndarray:
+    """Binance klines satırları (12 alan: açılış zamanı, o, h, l, c, v (baz), kapanış zamanı, qv (USDT), işlem adedi,
+    alıcı baz hacmi, alıcı USDT hacmi, yok sayılan; çoğu metin) -> (n, 9) = ts, o, h, l, c, v, qv, n, aqv; açılışa
+    göre sıralı, tekrarsız. Bozuk satır (eksik alan, sayı değil, sonsuz) atlanır. Kural makinenin
+    sniper.hafiza.klines_ayristir'iyle aynı (tests/test_strateji_lab.py karşılaştırır)."""
+    satirlar = []
+    for r in ham or []:
+        try:
+            satirlar.append((float(int(r[0])), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]),
+                             float(r[7]), float(int(float(r[8]))), float(r[10])))
+        except (TypeError, ValueError, IndexError, OverflowError):
+            continue
+    d = np.asarray(satirlar, dtype=float).reshape(-1, 9)
+    d = d[np.isfinite(d).all(axis=1)]
+    _, i = np.unique(d[:, 0], return_index=True)
+    return d[i]
+
+
+def kline_izgarasi(d: np.ndarray, g0: int, n: int):
+    """KlineDeposu satırları (ts, o, h, l, c, v, qv, n, aqv) -> g0'dan başlayan n saatlik ızgarada O, H, L, C, V, QV,
+    N, AQV. O..V izgaraya_yerlestir ile birebir (eksik saat NaN; bozuk fiyatlı mumun tamamı, sıfır/eksi hacmin yalnız
+    V'si NaN); QV/N/AQV: fiyatı bozuk/eksik saatte NaN, eksi/sonsuz değer NaN, sıfır kalır (makinenin
+    sniper.hafiza.izgaraya_koy kuralı; tests/test_strateji_lab.py karşılaştırır)."""
+    d = np.asarray(d, dtype=float).reshape(-1, 9)
+    O, H, L, C, V = izgaraya_yerlestir(d, g0, n)
+    E = np.full((n, 3), np.nan)
+    if len(d):
+        rel = d[:, 0].astype('int64') - int(g0)
+        i = rel // SAAT_MS
+        uygun = (rel >= 0) & (i < n) & (rel % SAAT_MS == 0)
+        E[i[uygun]] = d[uygun, 6:9]
+    with np.errstate(invalid='ignore'):
+        E[~np.isfinite(C)] = np.nan
+        E[~np.isfinite(E) | (E < 0)] = np.nan
+    return O, H, L, C, V, E[:, 0].copy(), E[:, 1].copy(), E[:, 2].copy()
+
+
+class KlineDeposu(vs.MumDeposu):
+    """Ham Binance 1 saatlik klines önbelleği (--faz2). vs.MumDeposu ile aynı kurallar: aynı aralık iki kez indirilmez
+    (kapsam listesi), sayfalama (since = son mum + 1 saat, 1000'lik), henüz kapanmamış mum (açılışı >= şimdinin saat
+    başı) asla saklanmaz, ağ/zaman aşımı/istek sınırı hatasında 2, 4, 8 sn bekleyip yeniden dener (deneme = 4),
+    BadSymbol -> VeriYok (sembol bu çalıştırmada bir daha sorulmaz). Fark: uç ex.publicGetKlines({'symbol':
+    ex.market(sym)['id'], 'interval': '1h', 'startTime': ms, 'limit': 1000}) (piyasalar yüklenmemişse önce
+    ex.load_markets()); getir (n, 9) = ts, o, h, l, c, v, qv, n, aqv döndürür (klines_satirlari). Önbellek dosyası
+    '<SYM>_1h_klines.pkl': aynı --onbellek dizinindeki MumDeposu dosyasıyla ('<SYM>_1h.pkl') çakışmaz. O..V sütunları
+    fetch_ohlcv'nin verdiğiyle aynı sayılar (ccxt de aynı metinleri float'a çevirir): eski kurallar iki yolda aynı
+    işlemleri üretir (tests/test_strateji_lab.py)."""
+    SUTUN = 9
+
+    def __init__(self, ex, dizin=None, simdi_ms=None, deneme=4, uyku: Callable[[float], None] = time.sleep):
+        super().__init__(ex, dizin, simdi_ms, deneme)
+        self.uyku = uyku
+
+    def _dosya(self, sym, tf):
+        return os.path.join(self.dizin, f"{sym.replace('/', '_').replace(':', '_')}_{tf}{KLINE_EKI}.pkl")
+
+    def _yukle(self, sym, tf):
+        if (sym, tf) in self._veri:
+            return
+        veri, kapsam = np.empty((0, self.SUTUN)), []
+        if self.dizin and os.path.exists(self._dosya(sym, tf)):
+            try:
+                with open(self._dosya(sym, tf), 'rb') as f:
+                    d = pickle.load(f)
+                veri = np.asarray(d['veri'], dtype=float).reshape(-1, self.SUTUN)
+                kapsam = [(int(x), int(y)) for x, y in d['kapsam']]
+            except Exception:  # noqa: BLE001 - bozuk önbellek yeniden indirilir
+                veri, kapsam = np.empty((0, self.SUTUN)), []
+        self._veri[(sym, tf)], self._kapsam[(sym, tf)] = veri, kapsam
+
+    def _cek(self, sym, tf, since):
+        """Bir sayfa ham klines satırı (borsanın döndürdüğü liste; r[0] açılış zamanı)."""
+        import ccxt
+        for deneme in range(self.deneme):
+            try:
+                self.istek += 1
+                if not getattr(self.ex, 'markets', None):
+                    self.ex.load_markets()
+                mid = self.ex.market(sym)['id']
+                return self.ex.publicGetKlines({'symbol': mid, 'interval': tf, 'startTime': int(since),
+                                                'limit': 1000})
+            except ccxt.BadSymbol as e:
+                raise vs.VeriYok(f"{sym}: {e}") from e
+            except ccxt.OperationFailed:   # ağ/zaman aşımı/limit: bekle ve tekrar dene
+                if deneme == self.deneme - 1:
+                    raise
+                self.uyku(2 ** (deneme + 1))
+        return []
+
+    def getir(self, sym, tf, a, b) -> np.ndarray:
+        """[a, b) aralığında açılan KAPANMIŞ mumlar: ndarray (n, 9) = ts, o, h, l, c, v, qv, n, aqv (vs.MumDeposu.getir
+        ile aynı akış; yalnız satır genişliği ve ayrıştırma farklı)."""
+        if sym in self._yok:
+            raise vs.VeriYok(sym)
+        adim = vs.TF_MS[tf]
+        acik_mum = (self.simdi_ms // adim) * adim          # henüz kapanmamış mumun açılışı
+        a, b = (int(a) // adim) * adim, min(int(b), acik_mum)
+        if b <= a:
+            return np.empty((0, self.SUTUN))
+        self._yukle(sym, tf)
+        anahtar = (sym, tf)
+        eksik = self.eksikler(self._kapsam[anahtar], a, b)
+        if eksik:
+            yeni, kapsam = [], list(self._kapsam[anahtar])
+            try:
+                for x, y in eksik:
+                    since, son_kapsam = x, y
+                    while since < y:
+                        parca = self._cek(sym, tf, since)
+                        if not parca:
+                            break
+                        yeni.extend(parca)
+                        son = int(parca[-1][0])
+                        if son + adim <= since:
+                            break
+                        since = son + adim
+                        son_kapsam = max(son_kapsam, min(since, acik_mum))
+                    kapsam.append((x, son_kapsam))
+            except vs.VeriYok:
+                self._yok.add(sym)
+                raise
+            if yeni:
+                arr = klines_satirlari(yeni)
+                arr = arr[arr[:, 0] < acik_mum]
+                eski = self._veri[anahtar]
+                birlesik = np.vstack([eski, arr]) if len(eski) else arr
+                _, idx = np.unique(birlesik[:, 0], return_index=True)
+                self._veri[anahtar] = birlesik[idx]
+            self._kapsam[anahtar] = self.birlestir(kapsam)
+            self._kaydet(sym, tf)
+        v = self._veri[anahtar]
+        if not len(v):
+            return v
+        i, j = np.searchsorted(v[:, 0], [a, b], side='left')
+        return v[i:j]
 
 
 def kesit_sutunu(C: np.ndarray, V: np.ndarray):
@@ -509,6 +738,111 @@ def kombo_bilesenleri(kural: str, s: Dict[str, np.ndarray], rejim: Optional[np.n
             KOMBO_YATAY: (s[KOMBO_YATAY] & (rejim == 'YATAY'), KURAL_CIKIS[KOMBO_YATAY])}
 
 
+def yeni_ozellik_dizileri(O, H, L, C, QV, N, AQV, parca: int = OZELLIK_PARCA) -> Dict[str, np.ndarray]:
+    """2. aşama: her saat için makine_ozellikleri.yeni_ozellikler (makinenin canlıda kullandığı kod; 15 özellik,
+    YENI_OZELLIKLER sırasıyla). Saatler `parca`lık parçalarla hesaplanır (168 saatlik medyan penceresinin belleği);
+    her satır yalnız kendi saatine bağlı olduğundan sonuç tek seferde hesaplananla birebir aynı (test edilir)."""
+    n = len(C)
+    if not n:
+        return {k: np.empty(0) for k in mo.YENI_OZELLIKLER}
+    parcalar = [mo.yeni_ozellikler(O, H, L, C, QV, N, AQV, idx=np.arange(i, min(i + parca, n)))
+                for i in range(0, n, parca)]
+    return {k: np.concatenate([p[k] for p in parcalar]) for k in mo.YENI_OZELLIKLER}
+
+
+def gercek_hacim(yo: Dict[str, np.ndarray]) -> np.ndarray:
+    """GERCEK_HACIM süzgeci (§14), karar mumu t'de: islem_orani >= 2.0, buyuk_lot_orani <= 1.5, alici_payi6 >= 0.55,
+    hacim_yogunlugu24 <= 0.25 (bool; girdilerden biri NaN ise False)."""
+    with np.errstate(invalid='ignore'):
+        return ((yo['islem_orani'] >= GH_ISLEM_ORANI) & (yo['buyuk_lot_orani'] <= GH_BUYUK_LOT)
+                & (yo['alici_payi6'] >= GH_ALICI_PAYI6) & (yo['hacim_yogunlugu24'] <= GH_YOGUNLUK))
+
+
+def gercek_hacim_degeri(yo: Dict[str, np.ndarray]) -> np.ndarray:
+    """CSV ve süzgeç katkısı için GERCEK_HACIM: 1.0 / 0.0, girdilerden biri NaN ise NaN (hesaplanamaz: NULL)."""
+    hesap = np.logical_and.reduce([np.isfinite(yo[k]) for k in GH_GIRDILERI])
+    return np.where(hesap, gercek_hacim(yo).astype(float), np.nan)
+
+
+def yeni_sinyaller(g: dict, yo: Dict[str, np.ndarray], QV: np.ndarray, s: Dict[str, np.ndarray],
+                   btc_ok: np.ndarray, min_hacim: float) -> Dict[str, np.ndarray]:
+    """§14'ün 6 yeni kuralının karar mumu t'deki sinyalleri (bool). g: gostergeler (eski tanımlar: ret24, EMA'lar,
+    RSI14, vol_ratio14 ve 24s hacim vol24 = V x C ile), yo: yeni_ozellik_dizileri (ham klines qv/n/aqv ile), QV: ham
+    klines USDT hacmi (UC_ASKER'in artan hacmi), s: sinyaller() çıktısı (ERKEN_GERCEK/BOT_GERCEK onun ERKEN_BIRIKIM /
+    BOT_VEKILI sinyalini kullanır; BOT_VEKILI yoksa (radar verilmemiş) BOT_GERCEK de yok). Eski kurallar gibi
+    paritenin ilk MIN_GECMIS dolu saati (gecmis) ve sonlu kapanış gerekir; NaN içeren karşılaştırmalar yanlıştır."""
+    c = g['c']
+    ok = g['gecmis'] & np.isfinite(c)
+    QV = np.asarray(QV, dtype=float)
+    qv1, qv2 = _kaydir(QV, 1), _kaydir(QV, 2)
+    gh = gercek_hacim(yo)
+    y = {}
+    with np.errstate(invalid='ignore'):
+        hacim = g['vol24'] >= min_hacim
+        if 'ERKEN_BIRIKIM' in s:
+            y['ERKEN_GERCEK'] = s['ERKEN_BIRIKIM'] & gh
+        if 'BOT_VEKILI' in s:
+            y['BOT_GERCEK'] = s['BOT_VEKILI'] & gh
+        y['SESSIZ_BIRIKIM'] = (ok & btc_ok & (np.abs(g['ret24']) <= SESSIZ_RET24) & (c > g['ema50'])
+                               & (yo['alici_payi6'] >= SESSIZ_ALICI6) & (yo['islem_orani'] >= SESSIZ_ISLEM)
+                               & (yo['buyuk_lot_orani'] <= SESSIZ_LOT) & (yo['hacim_yogunlugu24'] <= SESSIZ_YOGUNLUK)
+                               & hacim)
+        y['YUTAN_TREND'] = (ok & btc_ok & (yo['yutan_boga'] == 1) & (c > g['ema50']) & (g['ema50'] > g['ema200'])
+                            & (g['ret24'] >= YUTAN_RET_ALT) & (g['ret24'] <= YUTAN_RET_UST)
+                            & (g['vol_ratio14'] >= YUTAN_VOL14) & hacim)
+        y['CEKIC_DIP'] = (ok & btc_ok & (yo['cekic'] == 1) & (g['rsi14'] < CEKIC_RSI) & (c > g['ema200']) & hacim)
+        y['UC_ASKER'] = (ok & btc_ok & (yo['uc_beyaz_asker'] == 1) & (QV > qv1) & (qv1 > qv2) & (c > g['ema50'])
+                         & (g['ret24'] <= ASKER_RET24) & hacim)
+    return y
+
+
+def ileri_etiket_dizisi(O, H, L, C, idx=None, parca: int = OZELLIK_PARCA) -> Dict[str, np.ndarray]:
+    """makine_ozellikleri.ileri_etiketler'in ucus10 ve max_yukari_24s etiketlerinin vektör hâli (dedektör karnesinin
+    taban oranı bütün parite-saatlerinde hesaplanır). Her i için ileri_etiketler(O, H, L, C, i) ile birebir aynı
+    (tests/test_strateji_lab.py rastgele boşluklu veride satır satır karşılaştırır): ufuk UFUK (24) saat, karar
+    kapanışı c0 = C[i]; i + UFUK ızgarada yoksa, c0 sonlu ve pozitif değilse ya da t+1..t+24 içinde AZAMI_EKSIK'ten
+    (2) çok eksik saat (açılış ya da kapanış yok) varsa NaN. max_yukari_24s = max(H[dolu saatler]) / c0 - 1. ucus10:
+    +%10 (c0 x 1.10) -%5'ten (c0 x 0.95) önce: 1, önce -%5 ya da hiçbiri: 0; açılışı eksik mum atlanır; mum içi sıra
+    yeşil (C >= O) açılış->dip->tepe->kapanış, kırmızı açılış->tepe->dip->kapanış (cikis_simule ile aynı)."""
+    O, H, L, C = (np.asarray(x, dtype=float) for x in (O, H, L, C))
+    n, u = len(C), mo.UFUK
+    idx = np.arange(n) if idx is None else np.asarray(idx, dtype=int).reshape(-1)
+    hk, sk = mo.UCUS['ucus10']
+    sonuc = {'ucus10': np.full(len(idx), np.nan), 'max_yukari_24s': np.full(len(idx), np.nan)}
+    if not len(idx) or not n:
+        return sonuc
+    dolgu = np.full(u, np.nan)
+    pencere = {ad: np.lib.stride_tricks.sliding_window_view(np.concatenate([x, dolgu])[1:], u)   # satır i: i+1..i+u
+               for ad, x in (('O', O), ('H', H), ('L', L), ('C', C))}
+    for bas in range(0, len(idx), parca):
+        ii = idx[bas:bas + parca]
+        icinde = (ii >= 0) & (ii + u < n)
+        j = np.clip(ii, 0, n - 1)
+        wo, wh, wl, wc = (pencere[ad][j] for ad in 'OHLC')
+        c0 = C[j]
+        with np.errstate(invalid='ignore', divide='ignore'):
+            dolu = np.isfinite(wo) & np.isfinite(wc)
+            gecerli = icinde & np.isfinite(c0) & (c0 > 0) & (u - dolu.sum(axis=1) <= mo.AZAMI_EKSIK)
+            maxy = np.where(dolu, wh, -np.inf).max(axis=1) / c0 - 1
+            hedef, stop = (c0 * hk)[:, None], (c0 * sk)[:, None]
+            yesil = wc >= wo
+            yol = (wo, np.where(yesil, wl, wh), np.where(yesil, wh, wl), wc)     # mum içi sıra
+            acik = np.isfinite(wo)                                             # açılışı eksik mum atlanır
+            ilk_h = np.full(wo.shape, 4)                                        # mumda hedefe ilk dokunulan nokta
+            ilk_s = np.full(wo.shape, 4)
+            for k in range(3, -1, -1):
+                ilk_h = np.where(acik & (yol[k] >= hedef), k, ilk_h)
+                ilk_s = np.where(acik & (yol[k] <= stop), k, ilk_s)
+        olay = (ilk_h < 4) | (ilk_s < 4)
+        kazanc = ilk_h < ilk_s                                                 # aynı noktada ikisi olamaz
+        ilk = olay.argmax(axis=1)
+        r = np.arange(len(ii))
+        ucus = np.where(olay.any(axis=1), kazanc[r, ilk], False).astype(float)
+        sonuc['ucus10'][bas:bas + parca] = np.where(gecerli, ucus, np.nan)
+        sonuc['max_yukari_24s'][bas:bas + parca] = np.where(gecerli, maxy, np.nan)
+    return sonuc
+
+
 def ozellikler(g: dict, btc: dict, ts: np.ndarray, idx) -> Dict[str, np.ndarray]:
     """AI özellikleri, karar mumu t'de (saat: giriş mumu t+1'in UTC saati)."""
     idx = np.asarray(idx, dtype=int)
@@ -687,14 +1021,24 @@ def islem_tablosu(kural, sembol: str, satirlar, ts: np.ndarray, oz: Optional[dic
 
 
 def parite_islemleri(sembol, O, H, L, C, V, ts, btc, radar_sutunu, kurallar, min_hacim, buyuk_hacim, ilk_e,
-                     analiz_sonu_i=None):
+                     analiz_sonu_i=None, ek: Optional[dict] = None, karne: Optional[dict] = None):
     """Geçiş 2: bir paritenin göstergeleri, sinyalleri ve işlemleri. Dönen: ([tüm kuralların işlemleri tek tabloda,
     özelliklerle] ya da işlem yoksa [], {kural: bitişte açık kalan}). Giriş mumu: ilk_e <= e < analiz_sonu_i ve azami
     tutma süresi veride kalmalı (e + azami <= veri uzunluğu; kombolarda işlemin bileşeninin çıkış tipine göre). Kombo
-    istenirse bileşen sinyalleri (kurallarda olmasalar da) hesaplanır."""
+    istenirse bileşen sinyalleri (kurallarda olmasalar da) hesaplanır. ek (yalnız --faz2): {'QV', 'N', 'AQV'} ham
+    klines dizileri (kline_izgarasi); verilirse yeni özellikler ve 6 yeni kuralın sinyalleri de hesaplanır (eski
+    kuralların sinyalleri değişmez) ve tabloya FAZ2_SUTUNLAR eklenir (karar mumundaki yeni özellikler, gercek_hacim,
+    karar kapanışından ileri etiketler ucus10 ve max_yukari_24s). karne (yalnız --faz2): dedektör karnesinin bütün
+    sinyaller görünümü için biriktirici (sinyal_karnesine_ekle; yerinde güncellenir)."""
     g = gostergeler(O, H, L, C, V)
     rejim = btc.get('rejim')
     s = sinyaller(g, btc['ok'], radar_sutunu, min_hacim, buyuk_hacim, rejim)
+    yo = None
+    if ek is not None:
+        yo = yeni_ozellik_dizileri(O, H, L, C, ek['QV'], ek['N'], ek['AQV'])
+        s.update(yeni_sinyaller(g, yo, ek['QV'], s, btc['ok'], min_hacim))
+    if karne is not None:
+        sinyal_karnesine_ekle(karne, s, rejim, kurallar, O, H, L, C, ts)
     listeler = [O.tolist(), H.tolist(), L.tolist(), C.tolist()]
     seriler = {tip: g[ad].tolist() for tip, ad in SINYAL_SERISI.items()}
     giris_siniri = len(O) if analiz_sonu_i is None else min(analiz_sonu_i, len(O))     # bu mumdan itibaren giriş yok
@@ -719,7 +1063,15 @@ def parite_islemleri(sembol, O, H, L, C, V, ts, btc, radar_sutunu, kurallar, min
     if not hepsi:
         return [], acik
     oz = ozellikler(g, btc, ts, [x[0] for x in hepsi])                  # tek tablo: kural başına tablo kurulmaz
-    return [islem_tablosu(kural_adi, sembol, hepsi, ts, oz, rejim)], acik
+    tablo = islem_tablosu(kural_adi, sembol, hepsi, ts, oz, rejim)
+    if yo is not None:
+        t = np.asarray([x[0] for x in hepsi], dtype=int)               # karar mumları
+        for k in mo.YENI_OZELLIKLER:
+            tablo[k] = yo[k][t]
+        tablo['gercek_hacim'] = gercek_hacim_degeri(yo)[t]
+        et = ileri_etiket_dizisi(O, H, L, C, t)
+        tablo['ucus10'], tablo['max_yukari_24s'] = et['ucus10'], et['max_yukari_24s']
+    return [tablo], acik
 
 
 # ------------------------------------------------------------------------------------------
@@ -1048,6 +1400,137 @@ def analiz(islemler: pd.DataFrame, kurallar, ai_acik: bool, bas_ms, ayrim_ms, so
 
 
 # ------------------------------------------------------------------------------------------
+# 2. aşama bilgi bölümleri: dedektör karnesi ve süzgeç katkısı (karar kuralı değildir)
+# ------------------------------------------------------------------------------------------
+DEDEKTOR_DONEMLERI = ('kurulus', 'sinama')
+GRUP_ADI = {'gecen': 'geçen', 'elenen': 'elenen', 'kendi': 'kendi'}     # süzgeç katkısı grupları (rapor adı)
+
+
+def taban_bos() -> dict:
+    return {d: {'n': 0, 'ucus10': 0.0, 'max_yukari_24s': 0.0} for d in DEDEKTOR_DONEMLERI}
+
+
+def taban_ekle(taban: dict, O, H, L, C, V, ts: np.ndarray, don: Dict[str, tuple], min_hacim: float) -> None:
+    """Dedektör karnesinin taban oranına bir paritenin katkısı (taban yerinde güncellenir): dönemdeki (saat, işlemler
+    gibi giriş saatine göre atanır: karar mumu t'nin giriş saati t + 1 saat [a, b) içinde) 24s hacmi (vol24,
+    gostergeler ile aynı tanım) >= min_hacim olan ve iki etiketi de hesaplanabilen BÜTÜN saatler: sayı, ucus10
+    toplamı, max_yukari_24s toplamı. Etiketler ileri_etiket_dizisi ile (ileri_etiketler ile birebir)."""
+    _, vol24 = kesit_sutunu(C, V)
+    giris = np.asarray(ts, dtype=np.int64) + SAAT_MS
+    for d in DEDEKTOR_DONEMLERI:
+        a, b = don[d]
+        with np.errstate(invalid='ignore'):
+            idx = np.flatnonzero((giris >= a) & (giris < b) & (vol24 >= min_hacim))
+        et = ileri_etiket_dizisi(O, H, L, C, idx)
+        f = np.isfinite(et['ucus10']) & np.isfinite(et['max_yukari_24s'])
+        taban[d]['n'] += int(f.sum())
+        taban[d]['ucus10'] += float(et['ucus10'][f].sum())
+        taban[d]['max_yukari_24s'] += float(et['max_yukari_24s'][f].sum())
+
+
+def karne_bos(don: Dict[str, tuple]) -> dict:
+    return {'donem': {d: don[d] for d in DEDEKTOR_DONEMLERI}, 'kural': {}}
+
+
+def sinyal_karnesine_ekle(karne: dict, s: Dict[str, np.ndarray], rejim: Optional[np.ndarray], kurallar, O, H, L, C,
+                          ts: np.ndarray) -> None:
+    """Dedektör karnesinin bütün sinyaller görünümü (§14 "her kuralın sinyallerinde"): bir paritenin, kuralın sinyal
+    verdiği BÜTÜN karar mumları (işleme dönüşmeyenler de: açık pozisyon, eksik giriş mumu, veri sonu), dönemlere giriş
+    saatine (t + 1 saat) göre; sayı, etiketli sayı, ucus10 ve max_yukari_24s toplamları karne['kural'][kural][dönem]'e
+    eklenir. Kombolarda sinyal = bileşen sinyallerinin (rejime göre) birleşimi."""
+    giris = np.asarray(ts, dtype=np.int64) + SAAT_MS
+    for kural in kurallar:
+        if kural in KOMBO_TREND:
+            bilesenler = kombo_bilesenleri(kural, s, rejim)
+            if bilesenler is None:
+                continue
+            x = np.logical_or.reduce([np.asarray(v[0], dtype=bool) for v in bilesenler.values()])
+        elif kural in s:
+            x = np.asarray(s[kural], dtype=bool)
+        else:
+            continue
+        for d, (a, b) in karne['donem'].items():
+            idx = np.flatnonzero(x & (giris >= a) & (giris < b))
+            et = ileri_etiket_dizisi(O, H, L, C, idx)
+            f = np.isfinite(et['ucus10']) & np.isfinite(et['max_yukari_24s'])
+            o = karne['kural'].setdefault(kural, {}).setdefault(d, {'n': 0, 'etiketli': 0, 'ucus10': 0.0,
+                                                                      'max_yukari_24s': 0.0})
+            o['n'] += int(len(idx))
+            o['etiketli'] += int(f.sum())
+            o['ucus10'] += float(et['ucus10'][f].sum())
+            o['max_yukari_24s'] += float(et['max_yukari_24s'][f].sum())
+
+
+def _oran(toplam: float, n: int) -> Optional[float]:
+    return toplam / n * 100 if n else None
+
+
+def dedektor_karnesi(islemler: pd.DataFrame, kurallar, taban: dict, don: Dict[str, tuple],
+                     karne: Optional[dict] = None) -> dict:
+    """Bilgi (§14): her kuralın işleme dönüşen sinyallerinde (karar mumu = işlemin karar mumu; döneme giriş zamanına
+    göre) ucus10 oranı (%) ve ortalama max_yukari_24s (%), taban oranla (taban_ekle) karşılaştırılır: kat = kural
+    ucus10 oranı / taban ucus10 oranı. n: dönemdeki işlem sayısı; etiketli: iki etiketi de olan (oranlar bunlarla).
+    karne verilirse (sinyal_karnesine_ekle) bütün sinyaller görünümü de: sinyal_n, sinyal_etiketli, sinyal_ucus10_pct,
+    sinyal_max_yukari_pct, sinyal_kat."""
+    t = {d: {'n': o['n'], 'ucus10_pct': _oran(o['ucus10'], o['n']),
+             'max_yukari_pct': _oran(o['max_yukari_24s'], o['n'])} for d, o in taban.items()}
+    sonuc = {'taban': t, 'kurallar': {}}
+    for kural in kurallar:
+        dk = islemler[islemler['kural'] == kural]
+        g = dk['giris_ts'].to_numpy(dtype='int64')
+        u = dk['ucus10'].to_numpy(dtype=float) if 'ucus10' in dk else np.full(len(dk), np.nan)
+        my = dk['max_yukari_24s'].to_numpy(dtype=float) if 'max_yukari_24s' in dk else np.full(len(dk), np.nan)
+        sonuc['kurallar'][kural] = {}
+        for d in DEDEKTOR_DONEMLERI:
+            a, b = don[d]
+            m = (g >= a) & (g < b)
+            f = m & np.isfinite(u) & np.isfinite(my)
+            o = {'n': int(m.sum()), 'etiketli': int(f.sum()), 'ucus10_pct': _oran(float(u[f].sum()), int(f.sum())),
+                 'max_yukari_pct': _oran(float(my[f].sum()), int(f.sum()))}
+            tb = t[d]['ucus10_pct']
+            o['kat'] = o['ucus10_pct'] / tb if o['ucus10_pct'] is not None and tb else None
+            if karne is not None:
+                k = karne['kural'].get(kural, {}).get(d, {'n': 0, 'etiketli': 0, 'ucus10': 0.0, 'max_yukari_24s': 0.0})
+                o.update(sinyal_n=k['n'], sinyal_etiketli=k['etiketli'],
+                         sinyal_ucus10_pct=_oran(k['ucus10'], k['etiketli']),
+                         sinyal_max_yukari_pct=_oran(k['max_yukari_24s'], k['etiketli']))
+                o['sinyal_kat'] = o['sinyal_ucus10_pct'] / tb if o['sinyal_ucus10_pct'] is not None and tb else None
+            sonuc['kurallar'][kural][d] = o
+    return sonuc
+
+
+def _grup_ozeti(df: pd.DataFrame) -> dict:
+    """Süzgeç katkısı hücresi: n, kazanma %, beklenti % (k=1 net), ucus10 oranı % (etiketli işlemlerde)."""
+    r = df['getiri_k1'].to_numpy(dtype=float)
+    u = df['ucus10'].to_numpy(dtype=float) if 'ucus10' in df else np.full(len(df), np.nan)
+    f = np.isfinite(u)
+    return {'n': int(len(r)), 'kazanma_pct': float((r > 0).mean()) * 100 if len(r) else None,
+            'beklenti_pct': float(r.mean()) * 100 if len(r) else None,
+            'ucus10_pct': _oran(float(u[f].sum()), int(f.sum()))}
+
+
+def suzgec_katkisi(islemler: pd.DataFrame, don: Dict[str, tuple]) -> dict:
+    """Bilgi (§14): taban kuralın (ERKEN_BIRIKIM, BOT_VEKILI) işlemleri karar mumunda GERCEK_HACIM'i geçenler ve
+    geçmeyenler (0 ya da hesaplanamayan; 'hesaplanamayan' ayrıca sayılır) olarak ayrılır (alt küme görünümü). Süzgeçli
+    kuralın (ERKEN_GERCEK, BOT_GERCEK) kendi işlem dizisi tek pozisyon kuralı yüzünden 'geçen' alt kümesinden farklı
+    olabilir (taban kuralın açık işlemi süzgeçli kuralda olmayabilir): ayrı satır 'kendi'. Dönemlere giriş zamanına
+    göre; her hücre _grup_ozeti."""
+    sonuc = {}
+    for yeni, taban_kural in SUZGEC_CIFTLERI:
+        dt = islemler[islemler['kural'] == taban_kural]
+        dy = islemler[islemler['kural'] == yeni]
+        gt, gy = dt['giris_ts'].to_numpy(dtype='int64'), dy['giris_ts'].to_numpy(dtype='int64')
+        gh = dt['gercek_hacim'].to_numpy(dtype=float) if 'gercek_hacim' in dt else np.full(len(dt), np.nan)
+        sonuc[yeni] = {'taban_kural': taban_kural}
+        for d in DEDEKTOR_DONEMLERI:
+            a, b = don[d]
+            m, my = (gt >= a) & (gt < b), (gy >= a) & (gy < b)
+            sonuc[yeni][d] = {'gecen': _grup_ozeti(dt[m & (gh == 1)]), 'elenen': _grup_ozeti(dt[m & ~(gh == 1)]),
+                              'hesaplanamayan': int((m & np.isnan(gh)).sum()), 'kendi': _grup_ozeti(dy[my])}
+    return sonuc
+
+
+# ------------------------------------------------------------------------------------------
 # Rapor
 # ------------------------------------------------------------------------------------------
 def _f(v, fmt, bos='-'):
@@ -1069,9 +1552,65 @@ def _pf(o: dict, anahtar: str) -> str:
 DONEM_ADI = {'kurulus': 'kuruluş', 'sinama': 'sınama'}
 
 
+def faz2_bolumleri(meta: dict, an: dict, _ad: Callable[[str], str], isaret: List[str]) -> List[str]:
+    """--faz2 raporunun bilgi bölümleri: 9) dedektör karnesi, 10) süzgeç katkısı (karar kuralı değildir)."""
+    pct = '{:.1f}%'
+    hacim = f"{meta['min_hacim'] / 1e6:g}M"
+    dk = an.get('dedektor', {})
+    y = ['', "9) DEDEKTÖR KARNESİ (bilgi; karar kuralı değildir) — işleme dönüşen sinyallerin karar kapanışından (c0) "
+             "sonraki 24 saatte +%10'a -%5'ten önce dokunma oranı (ucus10) ve ortalama en yüksek yükseliş "
+             f"(max_yukari_24s); taban: dönemin 24s hacmi >= {hacim} olan BÜTÜN parite-saatleri (etiketi olanlar); "
+             "kat = kural ucus10 oranı / taban ucus10 oranı. Saat, sinyal ve işlem dönemlere giriş saatine (karar + 1 "
+             "saat) göre atanır; n: işlem (solda) ya da sinyal (sağda: işleme dönüşmeyenler de, ör. açık pozisyon "
+             "sırasında tekrarlanan sinyal), etiketli: etiketi hesaplanabilen (oranlar bunlarla). Etiket tanımları "
+             "sniper/makine_ozellikleri.ileri_etiketler (makineyle aynı)."] + isaret
+    y.append((f"   {'':19s} {'':8s} {'— işleme dönüşen sinyaller (işlemin karar mumu) —':^44s}   "
+              f"{'— bütün sinyaller (bilgi) —':^44s}").rstrip())
+    sutunlar = f"{'n':>8s} {'etiketli':>9s} {'ucus10':>7s} {'max_yukarı':>10s} {'kat':>6s}"
+    y.append(f"   {'satır':19s} {'dönem':8s} {sutunlar}   {sutunlar}")
+    for dn in DEDEKTOR_DONEMLERI:
+        o = dk.get('taban', {}).get(dn, {})
+        y.append(f"   {'TABAN (tüm saatler)':19s} {DONEM_ADI[dn]:8s} {'-':>8s} {o.get('n', 0):9d} "
+                 f"{_f(o.get('ucus10_pct'), pct):>7s} {_f(o.get('max_yukari_pct'), '{:+.2f}%'):>10s} {'1.00':>6s}")
+    for kural, d in dk.get('kurallar', {}).items():
+        for dn in DEDEKTOR_DONEMLERI:
+            o = d[dn]
+            hucre = (f"   {o['sinyal_n']:8d} {o['sinyal_etiketli']:9d} {_f(o['sinyal_ucus10_pct'], pct):>7s} "
+                     f"{_f(o['sinyal_max_yukari_pct'], '{:+.2f}%'):>10s} {_f(o['sinyal_kat'], '{:.2f}'):>6s}"
+                     if 'sinyal_n' in o else '')
+            y.append(f"   {_ad(kural):19s} {DONEM_ADI[dn]:8s} {o['n']:8d} {o['etiketli']:9d} "
+                     f"{_f(o['ucus10_pct'], pct):>7s} {_f(o['max_yukari_pct'], '{:+.2f}%'):>10s} "
+                     f"{_f(o['kat'], '{:.2f}'):>6s}" + hucre)
+    y += ['', "10) SÜZGEÇ KATKISI (bilgi; karar kuralı değildir) — taban kuralın işlemleri karar mumunda "
+              "GERCEK_HACIM'e göre ayrılır: 'geçen' / 'elenen' (0 ya da hesaplanamayan; hesaplanamayan sayısı "
+              "ayrıca) — alt küme görünümü. 'kendi': süzgeçli kuralın kendi işlem dizisi; tek pozisyon kuralı "
+              "yüzünden 'geçen' alt kümesinden farklı olabilir. Beklenti işlem başına net (k=1); ucus10 9. "
+              "bölümdeki tanımla."]
+    y.append(f"   {'süzgeçli kural':15s} {'taban kural':14s} {'dönem':8s} {'grup':7s} {'n':>6s} {'kazan%':>6s} "
+             f"{'beklenti':>8s} {'ucus10':>7s}")
+    for yeni, d in an.get('suzgec', {}).items():
+        for dn in DEDEKTOR_DONEMLERI:
+            for grup in ('gecen', 'elenen', 'kendi'):
+                o = d[dn][grup]
+                ek = f"  (hesaplanamayan {d[dn]['hesaplanamayan']})" if grup == 'elenen' else ''
+                y.append(f"   {yeni:15s} {d['taban_kural']:14s} {DONEM_ADI[dn]:8s} {GRUP_ADI[grup]:7s} {o['n']:6d} "
+                         f"{_f(None if o['kazanma_pct'] is None else _kes(o['kazanma_pct']), '{:5.1f}%'):>6s} "
+                         f"{_f(o['beklenti_pct'], '{:+7.3f}%'):>8s} {_f(o['ucus10_pct'], pct):>7s}{ek}")
+    return y
+
+
 def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
     don_yil = [d for d in an['donemler'] if d.isdigit()]
-    y = [f"STRATEJİ LABORATUVARI | girişler {meta['baslangic']} → {meta['bitis']} (çıkışlar {meta['veri_sonu']}'e "
+    faz2 = bool(meta.get('faz2'))
+    ref = set(meta.get('referans', ())) if faz2 else set()
+
+    def _ad(x: str) -> str:                         # --faz2: referans satırı '*' ile işaretlenir
+        return x + '*' if x in ref else x
+    isaret = [f"   * {REFERANS_ISARETI}: yalnız karşılaştırma; karar 7. bölümde yalnız 6 yeni satıra uygulanır"
+              ] if ref else []
+    baslik = ('STRATEJİ LABORATUVARI — 2. AŞAMA (§14: mum formasyonları ve hacim kalitesi; ham Binance klines)'
+              if faz2 else 'STRATEJİ LABORATUVARI')
+    y = [f"{baslik} | girişler {meta['baslangic']} → {meta['bitis']} (çıkışlar {meta['veri_sonu']}'e "
          f"kadarki veriyle) | kuruluş/sınama ayrımı {meta['ayrim']} | 1 saatlik mumlar",
          f"Evren: bugünün en hacimli {meta['evren']} USDT paritesi + BTC; kullanılan {meta['parite']} parite "
          f"(sabit coin çıkarılan: {meta['sabit_coin']}, verisi olmayan: {meta['verisiz']}) | "
@@ -1082,24 +1621,24 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
          f"%{SLIP_SEVIYE * 100:.2f} / zaman-sinyal %{SLIP_ZAMAN * 100:.2f}; hedef (limit) kaymasız.",
          "Getiriler işlem başına net %; dönemlere GİRİŞ zamanına göre atanır. Bitişte açık kalan (hariç tutulan) "
          "işlem: " + ', '.join(f"{KISA.get(k, k)} {v}" for k, v in meta['acik_kalan'].items()),
-         '', '0) ' + KARAR_KURALI, '',
+         '', '0) ' + meta.get('karar_kurali', KARAR_KURALI), '',
          "1) KURALLAR — kuruluş ve sınama dönemi (beklenti = işlem başına ortalama net getiri; GA: gün bloklu "
-         "bootstrap; kazan% ve poz.ay aşağı yuvarlanır; ∞: hiç kayıp yok; poz.ay: en az 1 işlemi olan aylar)",
-         f"   {'satır':19s} {'dönem':8s} {'n':>6s} {'kazan%':>6s} {'ort.kaz':>7s} {'ort.kay':>7s} {'R:R':>5s} "
+         "bootstrap; kazan% ve poz.ay aşağı yuvarlanır; ∞: hiç kayıp yok; poz.ay: en az 1 işlemi olan aylar)"] + isaret
+    y += [f"   {'satır':19s} {'dönem':8s} {'n':>6s} {'kazan%':>6s} {'ort.kaz':>7s} {'ort.kay':>7s} {'R:R':>5s} "
          f"{'PF':>5s} {'beklenti':>8s} {'%95 GA':>17s} {'P(>0)':>6s} {'med.s':>5s} {'k.seri':>6s} {'poz.ay':>11s}"]
     for ad, d in an['sonuclar'].items():
         for dn in ('kurulus', 'sinama'):
             o = d.get(dn, {})
             if not o.get('n'):
-                y.append(f"   {ad:19s} {DONEM_ADI[dn]:8s} {0:6d}")
+                y.append(f"   {_ad(ad):19s} {DONEM_ADI[dn]:8s} {0:6d}")
                 continue
             ga = f"[{o['ga95_pct'][0]:+.2f}, {o['ga95_pct'][1]:+.2f}]"
-            y.append(f"   {ad:19s} {DONEM_ADI[dn]:8s} {o['n']:6d} {_kes(o['kazanma_pct']):5.1f}% "
+            y.append(f"   {_ad(ad):19s} {DONEM_ADI[dn]:8s} {o['n']:6d} {_kes(o['kazanma_pct']):5.1f}% "
                      f"{_f(o['ort_kazanc_pct'], '{:+.2f}%'):>7s} {_f(o['ort_kayip_pct'], '{:+.2f}%'):>7s} "
                      f"{_pf(o, 'rr'):>5s} {_pf(o, 'pf'):>5s} "
                      f"{o['beklenti_pct']:+7.3f}% {ga:>17s} {o['p_pozitif']:6.4f} {o['medyan_sure_saat']:5.0f} "
                      f"{o['kayip_serisi']:6d} {_kes(o['pozitif_ay_pct'], 0):4.0f}% ({o['pozitif_ay']}/{o['ay']})")
-    y += ['', "2) YIL YIL — her hücre: beklenti % / kazanma % / n (girişin yılına göre)",
+    y += ['', "2) YIL YIL — her hücre: beklenti % / kazanma % / n (girişin yılına göre)"] + isaret + [
           f"   {'satır':19s} " + ' '.join(f"{yil:>22s}" for yil in don_yil)]
     for ad, d in an['sonuclar'].items():
         hucre = []
@@ -1107,40 +1646,43 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
             o = d.get(yil, {})
             hucre.append(f"{o['beklenti_pct']:+.3f}% / {_kes(o['kazanma_pct'], 0):.0f}% / {o['n']}"
                          if o.get('n') else '-')
-        y.append(f"   {ad:19s} " + ' '.join(f"{h:>22s}" for h in hucre))
-    y += ['', "3) MALİYET DUYARLILIĞI — sınama beklentisi (%), maliyet katsayısı k (komisyon ve kaymalar x k)",
-          f"   {'satır':19s} " + ' '.join(f"{'k=' + format(k, 'g'):>9s}" for k in K_LISTESI)]
+        y.append(f"   {_ad(ad):19s} " + ' '.join(f"{h:>22s}" for h in hucre))
+    y += ['', "3) MALİYET DUYARLILIĞI — sınama beklentisi (%), maliyet katsayısı k (komisyon ve kaymalar x k)"]
+    y += isaret + [f"   {'satır':19s} " + ' '.join(f"{'k=' + format(k, 'g'):>9s}" for k in K_LISTESI)]
     for ad, d in an['maliyet'].items():
-        y.append(f"   {ad:19s} " + ' '.join(f"{_f(d[format(k, 'g')], '{:+.3f}%'):>9s}" for k in K_LISTESI))
+        y.append(f"   {_ad(ad):19s} " + ' '.join(f"{_f(d[format(k, 'g')], '{:+.3f}%'):>9s}" for k in K_LISTESI))
     butceler = list(next(iter(an['butce'].values())).keys()) if an['butce'] else []
     y += ['', f"4) BÜTÇE ({'/'.join(butceler)} USDT, işlem başına {meta['islem']:g} USDT; slot doluysa sinyal atlanır; "
               "aylık ort. dönemin tüm takvim aylarına bölünür; poz.ay: kârlı ay / dönemin TÜM takvim ayları, işlemsiz "
-              "ay pozitif sayılmaz — 1. bölümdeki poz.ay yalnız işlemli ayları sayar)",
+              "ay pozitif sayılmaz — 1. bölümdeki poz.ay yalnız işlemli ayları sayar)"] + isaret + [
           f"   {'satır':19s} {'bütçe':>5s} {'dönem':8s} {'alınan':>6s} {'toplam':>10s} {'aylık ort':>10s} "
           f"{'poz.ay':>7s} {'maks.düşüş':>10s}"]
     for ad, d in an['butce'].items():
         for bt, dd in d.items():
             for dn in ('kurulus', 'sinama'):
                 o = dd[dn]
-                y.append(f"   {ad:19s} {bt:>5s} {DONEM_ADI[dn]:8s} {o['alinan']:6d} {o['toplam_usdt']:+10.2f} "
+                y.append(f"   {_ad(ad):19s} {bt:>5s} {DONEM_ADI[dn]:8s} {o['alinan']:6d} {o['toplam_usdt']:+10.2f} "
                          f"{o['aylik_ort_usdt']:+10.2f} {str(o['pozitif_ay']) + '/' + str(o['ay']):>7s} "
                          f"{o['max_dusus_usdt']:10.2f}")
     sutun = list(an['aylik'])
     kurallar5 = list(dict.fromkeys(s.replace('+AI', '') for s in sutun))
     lejant = "   Sütunlar: " + ', '.join(f"{KISA.get(k, k)}={k}" for k in kurallar5) + "; +AI: AI varyantı"
+    basliklar = [KISA.get(s.replace('+AI', ''), s) + ('+AI' if s.endswith('+AI') else '') + ('*' if s in ref else '')
+                 for s in sutun]
     if 'YATAY_DONUS' in kurallar5:
         lejant += " (YATAY sütunu YATAY_DONUS kuralıdır, BTC rejimi değil; rejime göre ayrım 8. bölümde)"
     y += ['', f"5) AYLIK — sınama dönemi, {butceler[0] if butceler else '-'} USDT bütçe, ay ay gerçekleşen USDT "
-              "(girişin ayına göre; '-': o ay hiç işlem alınmadı)", lejant,
-          f"   {'ay':7s} " + ' '.join(f"{KISA.get(s.replace('+AI', ''), s) + ('+AI' if s.endswith('+AI') else ''):>10s}"
-                                    for s in sutun)]
+              "(girişin ayına göre; '-': o ay hiç işlem alınmadı)", lejant] + isaret + [
+          f"   {'ay':7s} " + ' '.join(f"{b:>10s}" for b in basliklar)]
     adet = an.get('aylik_adet', {})
     for ay in an['sinama_aylari']:
         y.append(f"   {ay:7s} " + ' '.join(f"{an['aylik'][s].get(ay, 0.0):+10.2f}" if adet.get(s, {}).get(ay, 0)
                                             else f"{'-':>10s}" for s in sutun))
     y += ['', "6) AI — ay ay ileri yürüyen model (M ayı yalnız M'den önce kapanmış işlemlerle); karşılaştırma sınama "
               "döneminin modelli aylarında, aynı işlemler üzerinde"]
-    if not an['ai']:
+    if faz2:
+        y.append("   (2. aşama: AI yok, §14)")
+    elif not an['ai']:
         y.append("   (AI kapalı ya da AI'lı kural seçilmedi)")
     for kural, o in an['ai'].items():
         ka = ai_aylar.get(kural, [])
@@ -1151,18 +1693,22 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
                  f"{_f(o.get('beklenti_ai_pct'), '{:+.3f}%')} | fark {_f(o.get('fark_pct'), '{:+.3f}%')} "
                  + (f"[{o['ga95_pct'][0]:+.3f}, {o['ga95_pct'][1]:+.3f}]" if o.get('ga95_pct') else '[-]')
                  + f" P(>0)={o['p_pozitif']:.4f}")
-    y += ['', "7) KARAR (önceden kayıtlı kural; ayrıntı 0. bölümde)"]
+    y += ['', "7) KARAR (önceden kayıtlı kural, §14: yalnız 6 yeni satıra uygulanır; ayrıntı 0. bölümde)" if faz2
+          else "7) KARAR (önceden kayıtlı kural; ayrıntı 0. bölümde)"]
     gecen = 0
     for ad, k in an['karar'].items():
         gecen += k['sonuc'] == 'GEÇTİ'
         hedef = "  [10'da 7 hedefi: sınama kazanma >= %70]" if k['hedef_70'] else ''
         y.append(f"   {ad:19s} {k['sonuc']:6s}" + (f" — sağlanmayan: {'; '.join(k['kalan'])}" if k['kalan'] else '')
                  + hedef)
+    for ad in an['sonuclar']:
+        if ad in ref:
+            y.append(f"   {_ad(ad):19s} {REFERANS_ISARETI}")
     y.append(f"   SONUÇ: {len(an['karar'])} satırdan {gecen} tanesi GEÇTİ.")
     esik = REJIM_ADX_ESIK
     y += ['', "8) REJİM — girişteki BTC rejimine göre (bilgi amaçlı; karar kuralını değiştirmez). Rejim karar mumunda: "
               f"BTC 1s ADX14 >= {esik} ve kapanış > EMA200 TREND_YUKARI; ADX14 >= {esik} ve kapanış <= EMA200 "
-              f"TREND_ASAGI; ADX14 < {esik} YATAY; GA ve P(>0) gün bloklu bootstrap"]
+              f"TREND_ASAGI; ADX14 < {esik} YATAY; GA ve P(>0) gün bloklu bootstrap"] + isaret
     dag = an.get('rejim_dagilim', {})
     if dag:
         y.append("   Saatlerin rejim dağılımı: " + ' | '.join(
@@ -1174,15 +1720,22 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
         for dn in ('kurulus', 'sinama'):
             for r, o in d.get(dn, {}).items():
                 if not o.get('n'):
-                    y.append(f"   {kural:19s} {DONEM_ADI[dn]:8s} {r:12s} {0:6d}")
+                    y.append(f"   {_ad(kural):19s} {DONEM_ADI[dn]:8s} {r:12s} {0:6d}")
                     continue
                 ga = f"[{o['ga95_pct'][0]:+.2f}, {o['ga95_pct'][1]:+.2f}]"
-                y.append(f"   {kural:19s} {DONEM_ADI[dn]:8s} {r:12s} {o['n']:6d} {_kes(o['kazanma_pct']):5.1f}% "
+                y.append(f"   {_ad(kural):19s} {DONEM_ADI[dn]:8s} {r:12s} {o['n']:6d} {_kes(o['kazanma_pct']):5.1f}% "
                          f"{o['beklenti_pct']:+7.3f}% {ga:>17s} {o['p_pozitif']:6.4f}")
-    y += ['', 'Kurallar: ' + ' | '.join(f"{k}: {v}" for k, v in KURAL_ACIKLAMA.items()),
-          "AI varyantı: <KURAL>+AI = kuralın, o ayın modelinin eşiğini geçen işlemleri (kombolarda ve BTC_TREND'de AI "
-          "yok).",
-          'Bilinen sınırlar:',
+    if faz2:
+        y += faz2_bolumleri(meta, an, _ad, isaret)
+        aciklama = {**{k: v for k, v in KURAL_ACIKLAMA.items() if k in an['sonuclar']}, **YENI_KURAL_ACIKLAMA}
+        y += ['', 'Kurallar: ' + ' | '.join(f"{k}: {v}" for k, v in aciklama.items()), GERCEK_HACIM_ACIKLAMA + '.',
+              "Yeni özellikler (karar mumu t; tanımlar sniper/makine_ozellikleri.py, makineyle aynı kod): "
+              + ', '.join(mo.YENI_OZELLIKLER) + '. AI yok.']
+    else:
+        y += ['', 'Kurallar: ' + ' | '.join(f"{k}: {v}" for k, v in KURAL_ACIKLAMA.items()),
+              "AI varyantı: <KURAL>+AI = kuralın, o ayın modelinin eşiğini geçen işlemleri (kombolarda ve BTC_TREND'de "
+              "AI yok)."]
+    y += ['Bilinen sınırlar:',
           '  - Evren bugünün en hacimli paritelerinden oluşur; dönem içinde delist olanlar yok (hayatta kalma '
           'yanlılığı, sonuçlar iyimser).',
           '  - 1 saatlik mum içi yol yaklaşıktır: yeşil mumda önce dip, kırmızıda önce tepe varsayılır.',
@@ -1202,6 +1755,13 @@ def rapor_metni(meta: dict, an: dict, ai_aylar: dict) -> str:
           'kombo eşlemesi veriden değil, baştan teoriye göre seçildi (ANALIZ §12.1).',
           f"  - Sabit coin kararı paritenin ilk {MIN_GECMIS} dolu saatiyle verilir (ilk olası sinyalden önce; "
           "geleceğe bakmaz)."]
+    if faz2:
+        y += ["  - 2. aşama: hacim kalitesi ham klines alanlarından (qv = USDT hacmi, işlem adedi, alıcı USDT hacmi); "
+              "168 saatlik medyanlar en az %90 dolu pencere ister, alici_payi6 ve hacim_yogunlugu24 pencerenin "
+              "hepsinin dolu olmasını; hesaplanamayan özellikle sinyal çıkmaz. UC_ASKER'in artan hacmi ham qv'dir; "
+              "24s hacim (>= min hacim) ve vol_ratio14 eski kurallardaki gibi V x C ile hesaplanır.",
+              "  - Desenler (yutan_boga, cekic, uc_beyaz_asker) 1 saatlik mumlardan; borsadaki mum sınırları (UTC saat "
+              "başı) dışında bir formasyon tanımı yok."]
     return '\n'.join(y)
 
 
@@ -1211,14 +1771,20 @@ def _tarih_dizisi(ms) -> np.ndarray:
     return np.char.replace(s, 'T', ' ') if len(s) else s
 
 
-def islemleri_yaz(islemler: pd.DataFrame, yol: str):
-    """İşlem tablosu -> CSV (CSV_SUTUNLAR; giriş/çıkış zamanı 'YYYY-MM-DD HH:MM' UTC). CSV_PARCA satırlık parçalarla
-    yazılır: tablonun tamamının biçimlenmiş kopyası bellekte tutulmaz (çıktı tek seferde yazılanla aynı)."""
+def islemleri_yaz(islemler: pd.DataFrame, yol: str, sutunlar: Optional[List[str]] = None):
+    """İşlem tablosu -> CSV (sutunlar, varsayılan CSV_SUTUNLAR; --faz2: CSV_FAZ2_SUTUNLAR; giriş/çıkış zamanı
+    'YYYY-MM-DD HH:MM' UTC; FAZ2_TAM_SAYI sütunları (desenler, gercek_hacim, ucus10) 0/1, hesaplanamayan boş (NULL)).
+    CSV_PARCA satırlık parçalarla yazılır: tablonun tamamının biçimlenmiş kopyası bellekte tutulmaz (çıktı tek seferde
+    yazılanla aynı)."""
+    sutunlar = CSV_SUTUNLAR if sutunlar is None else sutunlar
     with open(yol, 'w', encoding='utf-8', newline='') as f:
         for i in range(0, max(len(islemler), 1), CSV_PARCA):
-            parca = islemler.iloc[i:i + CSV_PARCA][CSV_SUTUNLAR].copy()
+            parca = islemler.iloc[i:i + CSV_PARCA][sutunlar].copy()
             for kol in ('giris_ts', 'cikis_ts'):
                 parca[kol] = _tarih_dizisi(parca[kol].to_numpy())
+            for kol in FAZ2_TAM_SAYI:
+                if kol in parca.columns:
+                    parca[kol] = parca[kol].astype(float).astype('Int64')
             parca.to_csv(f, header=i == 0, index=False)
 
 
@@ -1237,9 +1803,18 @@ def donem_sinirlari(bitis: Optional[str], simdi_ms: int):
 
 
 def calistir(ex, a, simdi_ms=None, log=print):
+    """Laboratuvar çalıştırması (modül belgesi). a.faz2 (--faz2): 2. aşama (§14) — veri KlineDeposu'ndan (ham klines),
+    satırlar FAZ2_KURALLARI (8 referans + 6 yeni; BTC_TREND ve AI yok; --kurallar verilemez), karar yalnız 6 yeni
+    satıra, rapora 9) dedektör karnesi ve 10) süzgeç katkısı, işlem CSV'sine FAZ2_SUTUNLAR eklenir; --cikti
+    verilmezse çıktılar strateji_lab_faz2_* (1. aşama raporunun üzerine yazılmaz)."""
     t_bas = time.time()
     simdi_ms = int(simdi_ms if simdi_ms is not None else time.time() * 1000)
-    cikti_dizini = os.path.dirname(os.path.abspath(a.cikti))
+    faz2 = bool(getattr(a, 'faz2', False))
+    if faz2 and list(a.kurallar) != list(KURALLAR):
+        raise ValueError("--faz2 ön kayıtlı 14 satırı (8 referans + 6 yeni kural) çalıştırır; --kurallar verilemez")
+    cikti = FAZ2_CIKTI if faz2 and a.cikti == VARSAYILAN_CIKTI else a.cikti
+    ai = bool(a.ai) and not faz2                         # 2. aşamada AI yok (§14)
+    cikti_dizini = os.path.dirname(os.path.abspath(cikti))
     os.makedirs(cikti_dizini, exist_ok=True)            # hatalı --cikti uzun hesaptan sonra değil, başta görünsün
     if not os.access(cikti_dizini, os.W_OK):
         raise PermissionError(f"çıktı dizinine yazılamıyor: {cikti_dizini}")
@@ -1252,13 +1827,13 @@ def calistir(ex, a, simdi_ms=None, log=print):
     ts = g0 + SAAT_MS * np.arange(n, dtype=np.int64)
     ilk_e = int(-(-(bas_ms - g0) // SAAT_MS))           # ilk giriş mumu: açılışı >= baslangic
     son_i = int((son_ms - g0) // SAAT_MS)               # ilk giriş YAPILAMAYAN mum: açılışı >= analiz sonu
-    kurallar = [k for k in KURALLAR if k in a.kurallar]
+    kurallar = list(FAZ2_KURALLARI) if faz2 else [k for k in KURALLAR if k in a.kurallar]
     cift_kurallari = [k for k in kurallar if k != 'BTC_TREND']
-    depo = vs.MumDeposu(ex, a.onbellek, simdi_ms=simdi_ms)
+    depo = KlineDeposu(ex, a.onbellek, simdi_ms=simdi_ms) if faz2 else vs.MumDeposu(ex, a.onbellek, simdi_ms=simdi_ms)
     # yalnız BTC_TREND seçildiyse evren gerekmez (BTC zaten indirilir)
     semboller = ['BTC/USDT'] + (bf.evren_sec(ex, a.evren) if cift_kurallari else [])
-    log(f"1 saatlik veri: {len(semboller)} parite, {vs._tarih(g0)[:10]} → {vs._tarih(g1)} (ısınma {ISINMA_GUN} gün; "
-        f"girişler {vs._tarih(son_ms)} öncesi)...")
+    log(f"1 saatlik {'ham klines ' if faz2 else ''}veri: {len(semboller)} parite, {vs._tarih(g0)[:10]} → "
+        f"{vs._tarih(g1)} (ısınma {ISINMA_GUN} gün; girişler {vs._tarih(son_ms)} öncesi)...")
 
     # BTC bağlamı bir kez (BTC_TREND'in MA100'ü için daha uzun ısınma; ADX ve rejim için H/L de)
     bg0 = g0 - (BTC_ISINMA_GUN - ISINMA_GUN) * GUN_MS
@@ -1275,17 +1850,29 @@ def calistir(ex, a, simdi_ms=None, log=print):
         kesit = gecis1(depo, semboller, g0, n, log)
         log(f"  sabit coin çıkarıldı: {len(kesit.sabit)} {kesit.sabit} | verisi olmayan: {len(kesit.verisiz)}")
         # REJIM_KOMBO_BOT'un trend bileşeni BOT_VEKILI: kurallarda olmasa da radar gerekir
-        radar = radar_ilk10(kesit.R24, kesit.V24) if {'BOT_VEKILI', 'REJIM_KOMBO_BOT'} & set(kurallar) else None
+        radar = (radar_ilk10(kesit.R24, kesit.V24) if {'BOT_VEKILI', 'REJIM_KOMBO_BOT', 'BOT_GERCEK'} & set(kurallar)
+                 else None)
         kesit.R24 = kesit.V24 = None        # radar hesaplandı; paneller bırakılır
     else:
         kesit, radar = Kesit(['BTC/USDT'], None, None, None, [], []), None
 
     tablolar, acik = [], Counter()
     m = len(kesit.semboller)
+    don = donemler(bas_ms, ayrim_ms, son_ms)
+    taban = taban_bos() if faz2 else None                # dedektör karnesinin taban oranı (bütün parite-saatleri)
+    karne = karne_bos(don) if faz2 else None             # dedektör karnesi, bütün sinyaller görünümü
     for j, s in enumerate(kesit.semboller if cift_kurallari else []):
-        O, H, L, C, V = izgaraya_yerlestir(depo.getir(s, TF, g0, g1), g0, n)
+        d = depo.getir(s, TF, g0, g1)
+        if faz2:
+            O, H, L, C, V, QV, N, AQV = kline_izgarasi(d, g0, n)
+            ek = {'QV': QV, 'N': N, 'AQV': AQV}
+            taban_ekle(taban, O, H, L, C, V, ts, don, a.min_hacim)
+        else:
+            O, H, L, C, V = izgaraya_yerlestir(d, g0, n)
+            ek = None
+        del d
         tb, ac = parite_islemleri(s, O, H, L, C, V, ts, btc, radar[:, j] if radar is not None else None,
-                                  cift_kurallari, a.min_hacim, a.buyuk_hacim, ilk_e, son_i)
+                                  cift_kurallari, a.min_hacim, a.buyuk_hacim, ilk_e, son_i, ek=ek, karne=karne)
         tablolar += tb
         acik.update(ac)
         if depo.dizin:
@@ -1302,7 +1889,7 @@ def calistir(ex, a, simdi_ms=None, log=print):
         acik['BTC_TREND'] += ac
     tablolar = [t for t in tablolar if len(t)]
     islemler = (pd.concat(tablolar, ignore_index=True) if tablolar
-                else pd.DataFrame(columns=CSV_SUTUNLAR[:-3]))
+                else pd.DataFrame(columns=CSV_SUTUNLAR[:-3] + (FAZ2_SUTUNLAR if faz2 else [])))
     islemler = islemler.sort_values(['kural', 'giris_ts', 'sembol'], kind='stable').reset_index(drop=True)
     for kol in ('giris_ts', 'cikis_ts'):
         islemler[kol] = islemler[kol].astype('int64')
@@ -1311,7 +1898,7 @@ def calistir(ex, a, simdi_ms=None, log=print):
     islemler['ai_secildi'] = False
 
     ai_aylar = {}
-    if a.ai:
+    if ai:
         for kural in [k for k in kurallar if k in AI_KURALLARI]:
             m_k = (islemler['kural'] == kural).to_numpy()
             skor, esik, ai_aylar[kural] = ai_ileri_yuruyus(islemler.loc[m_k, AI_SUTUNLARI], ayrim_ms, son_ms)
@@ -1321,27 +1908,38 @@ def calistir(ex, a, simdi_ms=None, log=print):
                 islemler.loc[m_k, 'ai_secildi'] = skor >= esik
             log(f"  AI {kural}: {sum(x['model'] for x in ai_aylar[kural])}/{len(ai_aylar[kural])} ayda model")
 
-    an = analiz(islemler, kurallar, a.ai, bas_ms, ayrim_ms, son_ms, a.butce, a.islem)
+    an = analiz(islemler, kurallar, ai, bas_ms, ayrim_ms, son_ms, a.butce, a.islem)
+    if faz2:                    # karar yalnız 6 yeni satıra (§14); eski kurallar referans
+        an['karar'] = {k: v for k, v in an['karar'].items() if k in YENI_KURALLAR}
+        an['referans'] = [k for k in kurallar if k not in YENI_KURALLAR]
+        an['dedektor'] = dedektor_karnesi(islemler, kurallar, taban, don, karne)
+        an['suzgec'] = suzgec_katkisi(islemler, don)
     an['rejim_dagilim'] = rejim_dagilimi(btc['rejim'], ts, {d: v for d, v in donemler(bas_ms, ayrim_ms, son_ms).items()
                                                             if d in DONEM_ADI})
     meta = {'baslangic': vs._tarih(bas_ms)[:10], 'bitis': vs._tarih(son_ms), 'veri_sonu': vs._tarih(g1),
             'ayrim': a.ayrim, 'evren': a.evren,
             'parite': m, 'sabit_coin': len(kesit.sabit), 'sabit_coinler': kesit.sabit,
             'verisiz': len(kesit.verisiz), 'min_hacim': a.min_hacim, 'buyuk_hacim': a.buyuk_hacim,
-            'butce': a.butce, 'islem': a.islem, 'kurallar': kurallar, 'ai': bool(a.ai), 'istek': depo.istek,
+            'butce': a.butce, 'islem': a.islem, 'kurallar': kurallar, 'ai': ai, 'istek': depo.istek,
             'acik_kalan': {k: int(acik.get(k, 0)) for k in kurallar}, 'islem_sayisi': int(len(islemler)),
             'maliyet': {'FEE': FEE, 'SLIP_GIRIS': SLIP_GIRIS, 'SLIP_SEVIYE': SLIP_SEVIYE, 'SLIP_ZAMAN': SLIP_ZAMAN},
             'rejim_adx_esik': REJIM_ADX_ESIK, 'ozellikler': list(OZELLIKLER),
-            'karar_kurali': KARAR_KURALI, 'olusturma': vs._tarih(simdi_ms), 'surumler': kutuphane_surumleri(),
-            'sure_sn': time.time() - t_bas}
+            'karar_kurali': KARAR_KURALI_FAZ2 if faz2 else KARAR_KURALI, 'olusturma': vs._tarih(simdi_ms),
+            'surumler': kutuphane_surumleri(), 'sure_sn': time.time() - t_bas}
+    if faz2:
+        meta.update(faz2=True, referans=an['referans'], yeni_kurallar=list(YENI_KURALLAR),
+                    yeni_ozellikler=list(mo.YENI_OZELLIKLER),
+                    gercek_hacim={'islem_orani_min': GH_ISLEM_ORANI, 'buyuk_lot_orani_max': GH_BUYUK_LOT,
+                                  'alici_payi6_min': GH_ALICI_PAYI6, 'hacim_yogunlugu24_max': GH_YOGUNLUK},
+                    etiket={'ufuk': mo.UFUK, 'ucus10': mo.UCUS['ucus10'], 'azami_eksik': mo.AZAMI_EKSIK})
     metin = rapor_metni(meta, an, ai_aylar)
-    with open(a.cikti + '_rapor.txt', 'w', encoding='utf-8') as f:
+    with open(cikti + '_rapor.txt', 'w', encoding='utf-8') as f:
         f.write(metin + '\n')
-    with open(a.cikti + '_rapor.json', 'w', encoding='utf-8') as f:
+    with open(cikti + '_rapor.json', 'w', encoding='utf-8') as f:
         json.dump({'meta': meta, **an, 'ai_aylar': ai_aylar}, f, ensure_ascii=False, indent=1, default=str)
-    islemleri_yaz(islemler, a.cikti + '_islemler.csv')
+    islemleri_yaz(islemler, cikti + '_islemler.csv', CSV_FAZ2_SUTUNLAR if faz2 else CSV_SUTUNLAR)
     log('\n' + metin)
-    log(f"\nÇıktılar: {a.cikti}_rapor.txt, {a.cikti}_rapor.json, {a.cikti}_islemler.csv")
+    log(f"\nÇıktılar: {cikti}_rapor.txt, {cikti}_rapor.json, {cikti}_islemler.csv")
     return {'meta': meta, 'analiz': an, 'islemler': islemler, 'kesit': kesit, 'ai_aylar': ai_aylar, 'btc': btc}
 
 
@@ -1391,12 +1989,19 @@ def arguman_ayristirici():
     ap.add_argument('--ai', dest='ai', action='store_true', default=True, help='AI varyantları (varsayılan açık)')
     ap.add_argument('--ai-yok', dest='ai', action='store_false', help='AI varyantlarını hesaplama')
     ap.add_argument('--onbellek', default=os.path.join(KOK, 'sim_onbellek'))
-    ap.add_argument('--cikti', default=os.path.join(KOK, 'strateji_lab'))
+    ap.add_argument('--cikti', default=VARSAYILAN_CIKTI,
+                    help='çıktı dosyalarının öneki (varsayılan: strateji_lab; --faz2 ile strateji_lab_faz2)')
+    ap.add_argument('--faz2', action='store_true',
+                    help='2. aşama (ANALIZ §14): ham klines (işlem adedi, alıcı hacmi), 8 referans + 6 yeni kural, '
+                         'karar yalnız yeni 6 satıra; dedektör karnesi ve süzgeç katkısı; AI yok, --kurallar verilemez')
     return ap
 
 
 def main(argv=None):
-    a = arguman_ayristirici().parse_args(argv)
+    ap = arguman_ayristirici()
+    a = ap.parse_args(argv)
+    if a.faz2 and list(a.kurallar) != list(KURALLAR):
+        ap.error("--faz2 ön kayıtlı 14 satırı (8 referans + 6 yeni kural) çalıştırır; --kurallar verilemez")
     import ccxt
     ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
     ex.rateLimit = max(ex.rateLimit or 0, 100)   # botla aynı IP limiti paylaşılıyor
