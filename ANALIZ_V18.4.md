@@ -1196,5 +1196,5 @@ Betik: `tools/boga_filtresi_analizi.py`. Girdiler: §14.1'deki işlem CSV'si ve 
 | 2026-09 | +%6.5 | −15.5 |
 
 - **Ağustos mevsimsel değil.** Ağustos 2023 −31.9, Ağustos 2024 −6.9, Ağustos 2025 −6.0 USDT.
-- **Sonuç: yükselen piyasa botun kâr etmesi için yeterli değil.** BTC'nin %10'dan fazla yükseldiği 10 ayın yalnız 2'sinde bot belirgin kâr etti. Ayrıca bu iki iyi ay önceden bilinebilen hiçbir göstergeyle seçilemiyor.
+- **Sonuç: yükselen piyasa botun kâr etmesi için yeterli değil.** 2023-01 → 2026-09 arasında BTC'nin %10'dan fazla yükseldiği 14 ay var. Bunların yalnız 6'sında bot artıda; yalnız 2'sinde 10 USDT'nin üstünde kâr etti (2023-01 +25.4, 2026-08 +29.3). Temmuz 2025'in +32'si BTC'nin yalnız %8 yükseldiği bir ayda geldi. İyi aylar önceden bilinebilen hiçbir göstergeyle seçilemiyor.
 
