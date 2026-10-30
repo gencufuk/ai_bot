@@ -1163,3 +1163,38 @@ Filtre durumu hesaplanamazsa (veri başı) işlem açılmaz.
 
 ERKEN_BIRIKIM, SIKISMA_KIRILIM, BOT_GERCEK ve REJIM_KOMBO_BOT'un filtreli hâlleri yalnız bilgi amaçlı gösterilir.
 
+### 15.1 Sonuçlar (30 Ekim, yerel hesap)
+Betik: `tools/boga_filtresi_analizi.py`. Girdiler: §14.1'deki işlem CSV'si ve `strateji_gunluk.csv`.
+
+**Karar: BOT_VEKILI'nin 3 filtreli hâlinin hiçbiri geçmedi.**
+
+| Filtre | Kuruluş beklenti | Sınama beklenti [P(>0)] | Sınama n |
+|---|---|---|---|
+| filtresiz | %−0.313 | %−0.161 [0.08] | 3589 |
+| F1 BOGA_PIYASA | %−0.366 | %−0.000 [0.49] | 1633 |
+| F2 KENDI_14G | %−0.543 | %−0.330 [0.04] | 1130 |
+| F3 IKISI | %−0.663 | %−0.274 [0.10] | 648 |
+
+- **F1 tutarsız.** Sınamada zararı sıfıra indiriyor, ama kuruluşta filtresiz hâlden daha kötü.
+- **F2 ve F3 iki dönemde de filtresiz hâlden kötü.** "Strateji iyi gidiyorsa devam et" işe yaramıyor: iyi seriler sürmüyor.
+- **Bilgi amaçlı kurallarda da (ERKEN, SIKISMA, BOT_GERCEK, REJIM_KOMBO_BOT) durum aynı.** F1 sınamada bazılarını küçük bir artıya taşıyor, kuruluşta kötüleştiriyor. F2 her yerde kötü.
+
+**Güçlü BTC aylarında bot (BOT_VEKILI, 20 USDT/işlem, filtresiz).**
+
+| Ay | BTC | Bot (USDT) |
+|---|---|---|
+| 2023-10 | +%28.5 | +5.0 |
+| 2023-11 | +%8.9 | −9.3 |
+| 2023-12 | +%12.1 | +0.9 |
+| 2024-02 | +%43.6 | −4.5 |
+| 2024-03 | +%16.6 | −10.9 |
+| 2024-11 | +%37.2 | +2.4 |
+| 2025-04 | +%14.1 | −6.9 |
+| 2025-05 | +%11.1 | +4.0 |
+| 2025-07 | +%8.0 | **+32.0** |
+| 2026-08 | +%25.0 | **+29.3** |
+| 2026-09 | +%6.5 | −15.5 |
+
+- **Ağustos mevsimsel değil.** Ağustos 2023 −31.9, Ağustos 2024 −6.9, Ağustos 2025 −6.0 USDT.
+- **Sonuç: yükselen piyasa botun kâr etmesi için yeterli değil.** BTC'nin %10'dan fazla yükseldiği 10 ayın yalnız 2'sinde bot belirgin kâr etti. Ayrıca bu iki iyi ay önceden bilinebilen hiçbir göstergeyle seçilemiyor.
+
