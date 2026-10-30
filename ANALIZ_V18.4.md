@@ -1140,3 +1140,26 @@ Laboratuvar (§12.2) hiçbir kuralın kârlı olmadığını gösterdiği için 
 
 Makine kâğıt modda veri toplamaya devam ediyor; gerçek emir yok. Bir sonraki adım, makinenin canlı hafızası (emir defteri dahil) birkaç ay biriktikten sonra 3. aşama.
 
+## 15. "Yalnız Ağustos gibi aylarda çalışsın" ön kaydı (30 Ekim, hesaptan önce)
+**Kullanıcının önerisi:** Bot Ağustos 2026 gibi yükseliş aylarında iyi kazandırıyor, o aylarda çalışsın. Sorulması gereken: böyle bir ayın içinde olduğumuz, o anda bilinen bilgiyle anlaşılabilir mi?
+
+**Not.** Aylık sonuçlar §12.2/§14.1 raporlarında daha önce görüldü. Bu yüzden test tamamen "kör" değil. Filtreler bu aylara göre ayarlanmadı; yaygın kullanılan tanımlar seçildi. 14 günlük pencere §11.7'deki denemelerden biri.
+
+**Veri.** §14.1'deki 1 saatlik laboratuvar işlemleri (2023-01 → 2026-10) ve BTC'nin günlük getirileri (`veri/arastirma_2026-09-30/strateji_gunluk.csv`, `BTC_TUT`). Filtre durumu girişten önceki günün kapanışıyla hesaplanır, yani gelecek bilgisi kullanılmaz.
+
+**Filtreler.**
+- **F1 BOGA_PIYASA:** Dünkü kapanışta BTC 50 günlük ortalamasının üstünde ve son 30 günde artıda.
+- **F2 KENDI_14G:** Kuralın girişten önceki 14 günde kapanmış işlemleri en az 5 tane ve ortalaması artıda. Strateji kâğıt üzerinde iyi gidiyorsa gerçek işlem açılır.
+- **F3 IKISI:** F1 ve F2 birlikte.
+
+Filtre durumu hesaplanamazsa (veri başı) işlem açılmaz.
+
+**Karar.** Karar yalnız BOT_VEKILI'nin (bugünkü botun 1 saatlik vekili) 3 filtreli hâline, §12'nin 5 koşuluyla uygulanır:
+1. sınamada en az 100 işlem;
+2. sınama beklentisi > 0 ve gün bloklu bootstrap P(>0) ≥ 0.99;
+3. kuruluş beklentisi > 0;
+4. işlemli sınama aylarının en az %60'ı pozitif;
+5. maliyet iki katındayken (k=2) sınama beklentisi > 0.
+
+ERKEN_BIRIKIM, SIKISMA_KIRILIM, BOT_GERCEK ve REJIM_KOMBO_BOT'un filtreli hâlleri yalnız bilgi amaçlı gösterilir.
+
