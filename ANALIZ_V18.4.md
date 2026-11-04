@@ -1198,3 +1198,26 @@ Betik: `tools/boga_filtresi_analizi.py`. Girdiler: §14.1'deki işlem CSV'si ve 
 - **Ağustos mevsimsel değil.** Ağustos 2023 −31.9, Ağustos 2024 −6.9, Ağustos 2025 −6.0 USDT.
 - **Sonuç: yükselen piyasa botun kâr etmesi için yeterli değil.** 2023-01 → 2026-09 arasında BTC'nin %10'dan fazla yükseldiği 14 ay var. Bunların yalnız 6'sında bot artıda; yalnız 2'sinde 10 USDT'nin üstünde kâr etti (2023-01 +25.4, 2026-08 +29.3). Temmuz 2025'in +32'si BTC'nin yalnız %8 yükseldiği bir ayda geldi. İyi aylar önceden bilinebilen hiçbir göstergeyle seçilemiyor.
 
+### 13.1 Makinenin ilk haftası (28 Ekim – 4 Kasım, 89 sunucusu, kâğıt mod)
+**İşletim.**
+- 30 Ekim'den beri her gün 24/24 tur tamamlandı. Hatalı tur ve mum hatası yok.
+- Kaçırılan saatler yalnız başlangıçta ve güncelleme sırasında oldu.
+- Evren günlük hacme göre 36–93 parite arasında değişti.
+- Veritabanı 26.6 MB. Etiketler 24 saat gecikmeyle yazılıyor (7.595 etiket).
+- 2 Kasım'da günlük rapor iki kez geldi (06:00 ve 07:00). O gün olay sayısı 1'den 2'ye çıktı; bu, bir Telegram gönderiminin başarısız sayılıp bir saat sonra tasarım gereği yeniden denendiğine işaret ediyor. Mesaj ilk denemede de ulaşmış olabilir. Zararsız.
+
+**Kâğıt sonuçlar** (20 USDT/işlem, kapanmış işlemler):
+
+| Strateji | n | Kazanma | İşlem başı | Toplam |
+|---|---|---|---|---|
+| BOT_VEKILI (bugünkü botun yöntemi) | 32 | %9.4 | %−1.59 | −10.20 USDT |
+| REJIM_KOMBO_BOT | 21 | %28.6 | %−1.42 | −5.96 USDT |
+| YATAY_DONUS | 16 | %37.5 | %−1.13 | −3.62 USDT |
+| REJIM_KOMBO | 16 | %37.5 | %−1.13 | −3.62 USDT |
+| TREND_DIP_RSI2 | 3 | %0 | %−1.59 | −0.95 USDT |
+
+- REJIM_KOMBO bu hafta YATAY_DONUS ile aynı. Bunun nedeni, yükselen trend rejiminde ERKEN_BIRIKIM sinyali çıkmaması.
+- Hiçbir strateji artıda değil. Yön laboratuvarla aynı: bugünkü yöntem bu hafta laboratuvar ortalamasından da kötü.
+- Bir hafta karar vermek için kısa. Sonuçlar, gerçek parayla çalışmamanın doğru olduğunu destekliyor.
+- **Dedektör karnesi.** Taban oran %5.3. BOT_VEKILI %6.5 (1.24 kat), laboratuvardaki 1.7 kattan düşük; örneklem küçük.
+
