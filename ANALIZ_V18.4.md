@@ -1236,3 +1236,35 @@ Betik: `tools/boga_filtresi_analizi.py`. Girdiler: §14.1'deki işlem CSV'si ve 
 - **Sinyal başı sonuç:** −%0.14 ile −%0.48 arasında.
 - **Değerlendirme:** Eski sürümün Ağustos 2026'daki kazancı Ekim'de tekrarlanmadı. Bu, §15.1'deki bulguyla uyumlu: kazanç belirli aylara özgü ve önceden seçilemiyor.
 
+### 13.2 Makinenin ilk 3 haftası (28 Ekim – 17 Kasım, kâğıt mod)
+**İşletim.**
+- 469 tur tamamlandı, hata yok; olay kaydı 3.
+- Veritabanı 39.9 MB:
+
+| Tablo | Satır |
+|---|---|
+| aday | 25.446 |
+| etiket | 24.204 |
+| defter | 4.161 |
+| kâğıt işlem | 240 |
+
+- Evren son günlerde 46–54 parite. Hacmi 5M USDT'yi geçen parite az.
+
+**Kâğıt sonuçlar** (kapanmış işlemler, 20 USDT/işlem):
+
+| Strateji | n | Kazanma | İşlem başı | Toplam |
+|---|---|---|---|---|
+| BOT_VEKILI | 94 | %14.9 | %−1.46 | −27.35 USDT |
+| REJIM_KOMBO_BOT | 47 | %36.2 | %−0.97 | −9.07 USDT |
+| TREND_DIP_RSI2 | 18 | %27.8 | %−2.57 | −9.24 USDT |
+| REJIM_KOMBO | 36 | %50.0 | %−0.43 | −3.07 USDT |
+| ERKEN_BIRIKIM | 6 | %16.7 | %−1.64 | −1.96 USDT |
+| YATAY_DONUS | 30 | %56.7 | %−0.19 | −1.11 USDT |
+| SIKISMA_KIRILIM | 1 | %0 | %−2.34 | −0.47 USDT |
+| YUKSEK_ISABET | 6 | %100 | %+1.30 | +1.56 USDT |
+
+- **YUKSEK_ISABET** 6 işlemin 6'sını hedefte kapattı. Örneklem çok küçük; laboratuvarda uzun dönemde %−0.12/işlem.
+- **Diğer stratejilerin hepsi eksi.**
+- **Dedektör karnesi (son 30 gün):** taban uçuş10 oranı %5.3. BOT_VEKILI %2.7 (0.51 kat), yani bu ay rastgele seçimden kötü. Laboratuvarda 1.7 kattı.
+- **Sonuç:** Canlı kâğıt sonuçları, laboratuvar ve Ekim simülasyonuyla tutarlı. Gerçek parayla çalışmama kararı sürüyor.
+
