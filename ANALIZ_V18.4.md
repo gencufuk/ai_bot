@@ -1221,3 +1221,18 @@ Betik: `tools/boga_filtresi_analizi.py`. Girdiler: §14.1'deki işlem CSV'si ve 
 - Bir hafta karar vermek için kısa. Sonuçlar, gerçek parayla çalışmamanın doğru olduğunu destekliyor.
 - **Dedektör karnesi.** Taban oran %5.3. BOT_VEKILI %6.5 (1.24 kat), laboratuvardaki 1.7 kattan düşük; örneklem küçük.
 
+### 15.2 Ekim 2026: eski sürüm ve bugünkü kurulum (17 Kasım, 89 sunucusu)
+- **Ne yapıldı:** 15 dakikalık simülatör (`tools/v184_simulasyon.py`, backfill) yalnız Ekim 2026 için çalıştırıldı.
+- **Rapor:** `veri/arastirma_2026-11-17/v184_sim_ekim_rapor.txt`.
+- **Sonuç:** 450 USDT bütçede bütün senaryolar eksi:
+
+| Senaryo | İşlem | Ekim 2026 (USDT) |
+|---|---|---|
+| B_V1802 (Ağustos'ta kazandıran eski sürüm) | 113 | −8.13 |
+| B_V184_AI (son canlı kurulum) | 71 | −9.21 |
+| B_V184 (AI'sız) | 136 | −17.61 |
+| B_AI_REJIMSIZ (en az kayıp) | 95 | −4.53 |
+
+- **Sinyal başı sonuç:** −%0.14 ile −%0.48 arasında.
+- **Değerlendirme:** Eski sürümün Ağustos 2026'daki kazancı Ekim'de tekrarlanmadı. Bu, §15.1'deki bulguyla uyumlu: kazanç belirli aylara özgü ve önceden seçilemiyor.
+
